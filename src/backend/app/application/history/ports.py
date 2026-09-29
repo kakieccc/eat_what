@@ -1,0 +1,9 @@
+from typing import Protocol
+
+from app.domain.history.models import HistoryPage
+
+
+class HistoryRepository(Protocol):
+    async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage: ...
+    async def runs(self, user_id: str, session_id: str) -> list[str]: ...
+    async def ready(self) -> None: ...
