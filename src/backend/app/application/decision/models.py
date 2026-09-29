@@ -16,13 +16,18 @@ from app.domain.decision.refinement import (
 from app.domain.places.models import Place
 
 
+class ConfirmationChange(Model):
+    before: JsonValue
+    after: JsonValue
+
+
 class DecisionRunResponse(Model):
     decision_run_id: str
     discovery_session_id: str
     status: Literal["pending", "running", "awaitingConfirmation", "completed", "failed"]
     request: DecisionRequest
     places: list[Place] = Field(default_factory=list)
-    confirmation: dict[str, JsonValue] | None = None
+    confirmation: dict[str, ConfirmationChange] | None = None
     filter_summary: dict[str, int] = Field(default_factory=dict)
     suggestions: list[str] = Field(default_factory=list)
     error_code: str | None = None

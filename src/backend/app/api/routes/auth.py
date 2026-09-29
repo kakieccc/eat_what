@@ -27,7 +27,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def cookie(response: Response, signed_in: SignedIn, services: ContainerDependency) -> None:
     response.set_cookie(
-        "food_session", signed_in.token, max_age=7 * 24 * 3600,
+        "food_session", signed_in.token,
+        max_age=services.settings.auth_session_days * 24 * 3600,
         path="/", secure=services.settings.auth_cookie_secure,
         httponly=True, samesite="lax",
     )

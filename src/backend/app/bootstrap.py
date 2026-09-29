@@ -12,15 +12,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.auth.service import AuthService
-from app.application.choice.service import ChoiceService
+from app.application.choice.ports import ChoiceRepository as ChoicePort
 from app.application.decision.commands import DecisionCommandService
 from app.application.decision.queries import DecisionQueryService
 from app.application.decision.runner import DecisionRunner
 from app.application.decision.streaming import DecisionStreamService
-from app.application.history.service import HistoryService
-from app.application.location.service import LocationService
+from app.application.history.ports import HistoryRepository as HistoryPort
 from app.application.places.service import PlaceService
-from app.application.preferences.service import PreferencesService
+from app.application.preferences.ports import PreferencesRepository as PreferencesPort
 from app.core.config import Settings
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
 from app.infrastructure.auth.passwords import Argon2PasswordHasher
@@ -46,11 +45,11 @@ class Container:
     decision_commands: DecisionCommandService
     decision_queries: DecisionQueryService
     decision_streams: DecisionStreamService
-    location: LocationService
+    location: AmapGeoPlaceProvider
     places: PlaceService
-    preferences: PreferencesService
-    history: HistoryService
-    choices: ChoiceService
+    preferences: PreferencesPort
+    history: HistoryPort
+    choices: ChoicePort
 
 
 def build_container(
@@ -61,7 +60,9 @@ def build_container(
     amap = AmapGeoPlaceProvider(client, sessions, settings)
     llm = OpenAICompatibleFoodDecisionLlm(settings)
     repository = DecisionRepository(sessions, settings.llm_model)
-    auth = AuthService(SqlAuthRepository(sessions), Argon2PasswordHasher())
+    auth = AuthService(
+        SqlAuthRepository(sessions), Argon2PasswordHasher(), settings.auth_session_days
+    )
     tasks = TaskStore(sessions)
     queries = DecisionQueryService(repository)
     runner = DecisionRunner(
@@ -89,11 +90,11 @@ def build_container(
         decision_commands=DecisionCommandService(repository),
         decision_queries=queries,
         decision_streams=DecisionStreamService(tasks, queries, auth),
-        location=LocationService(amap),
+        location=amap,
         places=PlaceService(PlacesRepository(sessions), amap),
-        preferences=PreferencesService(PreferencesRepository(sessions)),
-        history=HistoryService(HistoryRepository(sessions)),
-        choices=ChoiceService(ChoiceRepository(sessions)),
+        preferences=PreferencesRepository(sessions),
+        history=HistoryRepository(sessions),
+        choices=ChoiceRepository(sessions),
     )
 
 
@@ -110,25 +111,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.sessions = sessions
     async with httpx.AsyncClient(follow_redirects=False) as client:
-        while not app.state.ready:
-            try:
-                async with sessions() as db:
-                    await db.execute(text("SELECT 1"))
-                app.state.container = build_container(settings, sessions, client)
-                app.state.ready = True
-            except Exception:
-                logging.getLogger("food").warning(
-                    '{"event":"dependencyNotReady","errorCode":"DEPENDENCY_UNAVAILABLE"}'
-                )
-                await asyncio.sleep(5)
-
-        worker = asyncio.create_task(app.state.container.worker.run())
         try:
-            yield
+            async with sessions() as db:
+                await db.execute(text("SELECT 1"))
+            app.state.container = build_container(settings, sessions, client)
+            app.state.ready = True
+            worker = asyncio.create_task(app.state.container.worker.run())
+            try:
+                yield
+            finally:
+                await app.state.container.worker.stop()
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
         finally:
-            await app.state.container.worker.stop()
-            worker.cancel()
-            await asyncio.gather(worker, return_exceptions=True)
             app.state.ready = False
-
-    await engine_of(sessions).dispose()
+            await engine_of(sessions).dispose()

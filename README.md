@@ -21,7 +21,7 @@ cp .env.example .env
 
 不要将密钥提交到版本控制。缺少配置或仍使用 `replace-` 占位符时，后端启动失败。
 
-先创建数据库和数据库用户，并按当前部署方式准备业务表结构。项目暂不包含数据库迁移机制；应用启动时会检查数据库连接并启动持久化 Task Worker：
+先创建数据库和数据库用户，并执行当前 Alembic 迁移准备业务表结构；应用启动时会检查数据库连接并启动持久化 Task Worker：
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
@@ -48,7 +48,7 @@ pnpm dev --host localhost
 - 首页设置预算、步行上限、菜系、场景、人数、餐段和自然语言条件。
 - 搜索地址、浏览器定位（转换坐标）、点击高德地图选点，主动确认位置。
 - LangGraph 显式工作流：搜索、硬过滤、有限路线请求、规则评分、LLM 重排、多样性和证据理由；执行状态由 PostgreSQL Task 管理。
-- Fetch-based SSE 业务进度；硬约束变更暂停确认；断流后查询结果或恢复执行。
+- Fetch-based SSE 业务进度；硬约束变更暂停确认；断流后查询结果恢复。
 - 八种 Refine API 动作；常用五种直接展示为快捷按钮。
 - 选择餐厅、查看路线、打开高德导航、保存历史和基础偏好。
 
@@ -82,7 +82,7 @@ pnpm e2e
 - `app/main.py` 创建应用并挂载路由；`app/api` 负责 HTTP Schema、路由、SSE 帧编码和统一错误处理。
 - `app/application` 按 decision、places、history 等用例组织命令、查询和接口；`app/workflows/food_decision` 存放 LangGraph State、节点、事件和 Prompt；`app/domain` 按 geo、places、preferences、decision 分组放置业务类型和规则。
 - `app/infrastructure` 实现高德、LLM、缓存、PostgreSQL 仓储与 Task Worker。`app/bootstrap.py` 是具体依赖的唯一组装入口。依赖方向为 API → application → workflows/domain，基础设施实现内层接口。
-- `app/application/decision/commands.py` 编排创建、调整、确认恢复和幂等；`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件。跨表写入使用 Unit of Work，外部调用期间不持有数据库事务。
+- `app/application/decision/commands.py` 编排创建、调整、确认恢复和幂等；`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件。跨表写入使用短事务，外部调用期间不持有数据库事务。
 - 业务数据使用 PostgreSQL 表；每个执行请求都有 `Task`、`TaskStep` 和 `TaskEvent`，Task 状态是执行事实来源，结果仍从业务表读取。
 - 幂等记录按用户和操作隔离；Task 使用短事务、租约和 `FOR UPDATE SKIP LOCKED` 防止跨进程重复执行。
 - 推荐总执行预算默认 20 秒，等待用户确认不计时。较慢模型可能需要提高 `DECISION_TIMEOUT_SECONDS`，性能必须以真实调用衡量。
@@ -90,7 +90,7 @@ pnpm e2e
 - 过期缓存和幂等记录由后续运维任务负责清理；不清除业务历史。
 - `GET /api/v2/health/live` 检查进程；`GET /api/v2/health/ready` 检查数据库与工作流初始化，不发起收费上游调用。
 - PWA、生产部署、自动长期偏好学习、收藏、账号、骑行驾车和评测看板均不在本轮范围。
-- 当前版本不包含用户登录、账户归属或跨设备同步；用户管理接入前，历史和偏好按当前应用实例共享。
+- 当前版本包含用户登录和账户归属；不提供跨设备同步以外的长期偏好学习。
 
 ## API 资源
 
@@ -100,7 +100,7 @@ pnpm e2e
 - `POST /api/v2/decision-runs`、`GET /api/v2/decision-runs/{runId}`：创建或读取决策。
 - `GET /api/v2/decision-runs/{runId}/events`：订阅决策的 SSE 事件资源。
 - `POST /api/v2/decision-runs/{runId}/refinements`：创建一次调整后的子决策。
-- `PATCH /api/v2/decision-runs/{runId}`：确认条件或恢复决策执行。
+- `PATCH /api/v2/decision-runs/{runId}`：确认条件或恢复决策执行，返回 `202` 后继续订阅事件。
 - `GET /api/v2/discovery-sessions`、`GET /api/v2/discovery-sessions/{sessionId}/decision-runs`：读取历史会话及其决策。
 - `POST /api/v2/place-choices`：创建地点选择记录。
 - `GET /api/v2/preferences`、`PUT /api/v2/preferences`：读取或完整替换偏好资源。

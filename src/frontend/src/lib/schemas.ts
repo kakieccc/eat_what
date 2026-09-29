@@ -1,51 +1,5 @@
 import { z } from "zod";
 export type Point = { latitude: number; longitude: number };
-export type Route = {
-  mode: "walking";
-  source: "amap";
-  distanceMeters: number;
-  durationSeconds: number;
-  polyline: Point[];
-};
-export type Place = {
-  id: string;
-  externalId: string;
-  source: "amap";
-  name: string;
-  categoryCode: string;
-  categoryName: string;
-  cuisineTypes: string[];
-  address: string;
-  location: Point;
-  straightLineDistanceMeters: number;
-  rating: number | null;
-  averageCost: number | string | null;
-  businessStatus: "open" | "closed" | "unknown";
-  openingHoursText: string | null;
-  phone: string | null;
-  photos: string[];
-  route: Route | null;
-  dataUpdatedAt: string;
-  score: number;
-  scoreBreakdown: Record<string, number>;
-  reason: string;
-  warnings: string[];
-  navigationUrl: string | null;
-  candidateId: string | null;
-  rank: number;
-};
-export type Run = {
-  decisionRunId: string;
-  discoverySessionId: string;
-  status: "pending" | "running" | "awaitingConfirmation" | "completed" | "failed";
-  request: Preferences & { origin: Origin };
-  places: Place[];
-  confirmation?: Record<string, unknown> | null;
-  filterSummary?: Record<string, number>;
-  suggestions?: string[];
-  errorCode?: string | null;
-  chosenCandidateIds?: string[];
-};
 export const cuisines = [
   "中餐",
   "面馆",
@@ -115,7 +69,47 @@ export const defaults: Preferences = {
   openNowPreferred: true,
   requestText: "",
 };
-const runSchema = z
+const routeSchema = z.object({
+  mode: z.literal("walking"),
+  source: z.literal("amap"),
+  distanceMeters: z.number().nonnegative(),
+  durationSeconds: z.number().nonnegative(),
+  polyline: z.array(originSchema.omit({ address: true })),
+});
+export type Route = z.infer<typeof routeSchema>;
+export const placeSchema = z.object({
+  id: z.string(),
+  externalId: z.string(),
+  source: z.literal("amap"),
+  name: z.string(),
+  categoryCode: z.string(),
+  categoryName: z.string(),
+  cuisineTypes: z.array(z.string()),
+  address: z.string(),
+  location: originSchema.omit({ address: true }),
+  straightLineDistanceMeters: z.number().nonnegative(),
+  rating: z.number().nullable(),
+  averageCost: z.union([z.number(), z.string()]).nullable(),
+  businessStatus: z.enum(["open", "closed", "unknown"]),
+  openingHoursText: z.string().nullable(),
+  phone: z.string().nullable(),
+  photos: z.array(z.string()),
+  route: routeSchema.nullable(),
+  dataUpdatedAt: z.string(),
+  score: z.number(),
+  scoreBreakdown: z.record(z.string(), z.number()),
+  reason: z.string(),
+  warnings: z.array(z.string()),
+  navigationUrl: z.string().nullable(),
+  candidateId: z.string().nullable(),
+  rank: z.number().int(),
+});
+export type Place = z.infer<typeof placeSchema>;
+const confirmationChangeSchema = z.object({
+  before: z.unknown(),
+  after: z.unknown(),
+});
+export const runSchema = z
   .object({
     decisionRunId: z.string(),
     discoverySessionId: z.string(),
@@ -126,12 +120,16 @@ const runSchema = z
       "completed",
       "failed",
     ]),
-    places: z.array(
-      z.object({ id: z.string(), name: z.string() }).passthrough(),
-    ),
-    request: z.object({ origin: originSchema }).passthrough(),
+    places: z.array(placeSchema),
+    request: preferencesSchema.extend({ origin: originSchema }),
+    confirmation: z.record(z.string(), confirmationChangeSchema).nullable(),
+    filterSummary: z.record(z.string(), z.number()),
+    suggestions: z.array(z.string()),
+    errorCode: z.string().nullable(),
+    chosenCandidateIds: z.array(z.string()),
   })
   .passthrough();
+export type Run = z.infer<typeof runSchema>;
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("runStarted"),
@@ -148,18 +146,6 @@ export const eventSchema = z.discriminatedUnion("type", [
     node: z.string(),
     durationMs: z.number(),
     outputCount: z.number().nullable().optional(),
-  }),
-  z.object({
-    type: z.literal("providerStatus"),
-    operation: z.string(),
-    status: z.enum(["started", "succeeded", "failed"]),
-    count: z.number().nullable().optional(),
-  }),
-  z.object({ type: z.literal("progress"), message: z.string() }),
-  z.object({
-    type: z.literal("warning"),
-    code: z.string(),
-    message: z.string(),
   }),
   z.object({ type: z.literal("result"), data: runSchema }),
   z.object({ type: z.literal("confirmationRequired"), data: runSchema }),

@@ -111,7 +111,7 @@ erDiagram
 | --- | --- | --- |
 | `discovery_session_id` | `UUID` | 外键 → `discovery_sessions.id`，所属选餐会话。 |
 | `parent_decision_id?` | `UUID` | 自引用外键 → `decision_runs.id`，上一版决策。 |
-| `workflow_version`, `prompt_version` | `VARCHAR(32)` | 生成结果时使用的工作流和提示词版本；模型分别默认 `3`、`1`。 |
+| `workflow_version`, `prompt_version` | `VARCHAR(32)` | 生成结果时使用的工作流和提示词版本；模型分别默认 `4`、`1`。 |
 | `status` | `VARCHAR(32)` | 决策状态；模型默认 `pending`。 |
 | `refinement_action` | `VARCHAR(64)` | 产生本次调整的动作；初次决策默认为空字符串。 |
 | `effective_preferences` | `JSONB` | 实际参与本次计算的偏好快照。 |
@@ -197,7 +197,6 @@ erDiagram
 | `phase` | `VARCHAR(64)` | 当前工作流阶段；模型默认 `queued`。 |
 | `request_id` | `VARCHAR(36)` | 对应请求标识；模型默认空字符串。 |
 | `state` | `JSONB` | 工作流可恢复状态；模型默认空对象。 |
-| `result_refs` | `JSONB` | 结果引用列表；模型默认空列表。 |
 | `attempts` | `INTEGER` | 已尝试次数；模型默认 `0`。 |
 | `lease_token?` | `VARCHAR(64)` | 当前执行者的租约令牌。 |
 | `lease_until?` | `TIMESTAMP WITH TIME ZONE` | 租约截止时间。 |
@@ -208,7 +207,7 @@ erDiagram
 
 ### `task_steps`
 
-记录任务内各工作流步骤的输入、输出和执行状态，用于审计与恢复。
+记录任务内各工作流步骤的执行状态摘要，用于审计。
 
 | 字段 | 类型 | 设计用途 |
 | --- | --- | --- |
@@ -217,7 +216,6 @@ erDiagram
 | `ordinal` | `INTEGER` | 步骤顺序号。 |
 | `status` | `VARCHAR(32)` | 步骤状态；模型默认 `pending`。 |
 | `attempts` | `INTEGER` | 已尝试次数；模型默认 `0`。 |
-| `input_state`, `output_state` | `JSONB` | 步骤输入、输出状态；模型默认空对象。 |
 | `error_code?`, `error_message?` | `VARCHAR(64)`, `VARCHAR(500)` | 步骤失败信息。 |
 | `started_at?`, `completed_at?` | `TIMESTAMP WITH TIME ZONE` | 开始、结束时间。 |
 
@@ -284,4 +282,4 @@ erDiagram
 
 ## 迁移与当前状态
 
-首次迁移版本为 `0001_user_accounts`，`down_revision = None`；`0002_timezone_aware_timestamps` 将三个原本不带时区的时间列改为带时区类型。迁移不会由后端启动自动执行；在 `src/backend` 执行 `uv run alembic upgrade head` 会将 `DATABASE_URL` 指向的数据库更新至当前版本。执行前应确认目标连接配置。将迁移回退到 `base` 会删除全部 15 张业务表及其数据。
+首次迁移版本为 `0001_user_accounts`，`down_revision = None`；`0002_timezone_aware_timestamps` 将三个原本不带时区的时间列改为带时区类型；`0003_simplify_workflow_state` 删除未使用的 Task 结果引用和步骤全量快照，并将升级前未完成任务标记为 `WORKFLOW_UPGRADED`。迁移不会由后端启动自动执行；在 `src/backend` 执行 `uv run alembic upgrade head` 会将 `DATABASE_URL` 指向的数据库更新至当前版本。执行前应确认目标连接配置。将迁移回退到 `base` 会删除全部 15 张业务表及其数据。

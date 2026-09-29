@@ -103,7 +103,7 @@ class DecisionTransaction:
         run = DecisionRun(
             discovery_session_id=session_id,
             parent_decision_id=parent_id,
-            workflow_version="3",
+            workflow_version="4",
             effective_preferences=request.model_dump(mode="json"),
             excluded_place_keys=excluded,
             refinement_action=action,

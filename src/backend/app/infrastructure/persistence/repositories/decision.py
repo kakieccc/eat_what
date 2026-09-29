@@ -4,10 +4,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
 
+from pydantic import TypeAdapter
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.decision.models import DecisionRunResponse
+from app.application.decision.models import ConfirmationChange, DecisionRunResponse
 from app.application.task.models import LostTaskLease, TaskClaim
 from app.core.clock import now
 from app.core.errors import AppError
@@ -23,8 +24,8 @@ from app.infrastructure.persistence.models import (
     PlaceChoice,
     Task,
     TaskStatus,
+    TaskStep,
 )
-from app.infrastructure.persistence.unit_of_work import UnitOfWork
 from app.workflows.food_decision.state import State
 
 
@@ -32,7 +33,7 @@ class DecisionRepository:
     """Database transactions and mapping for decision use cases."""
 
     def __init__(self, sessions: async_sessionmaker[AsyncSession], model_name: str) -> None:
-        self.uow = UnitOfWork(sessions)
+        self.sessions = sessions
         self.model_name = model_name
 
     async def _run(self, session: AsyncSession, run_id: str, lock: bool = False) -> DecisionRun:
@@ -51,7 +52,7 @@ class DecisionRepository:
         return await self._read(run_id, user_id)
 
     async def _read(self, run_id: str, user_id: str | None = None) -> DecisionRunResponse:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             run = await self._run(session, run_id)
             discovery = await session.get(DiscoverySession, run.discovery_session_id)
             if discovery is None or (user_id is not None and discovery.user_id != user_id):
@@ -96,7 +97,9 @@ class DecisionRepository:
                 status=status,
                 request=request_for_run(run, discovery),
                 places=[place_from_candidate(candidate) for candidate in candidates],
-                confirmation=confirmation.changes if confirmation else None,
+                confirmation=TypeAdapter(dict[str, ConfirmationChange]).validate_python(
+                    confirmation.changes
+                ) if confirmation else None,
                 filter_summary=dict(run.filter_summary),
                 chosen_candidate_ids=list(chosen),
                 suggestions=[]
@@ -109,7 +112,7 @@ class DecisionRepository:
     async def transaction(
         self, user_id: str, lock_key: str
     ) -> AsyncIterator[DecisionTransaction]:
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
                 {"key": lock_id(user_id + ":" + lock_key)},
@@ -117,7 +120,7 @@ class DecisionRepository:
             yield DecisionTransaction(session, self.model_name, user_id)
 
     async def prepare(self, claim: TaskClaim) -> tuple[str, str, str, State, int]:
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             task = await self._owned(session, claim)
             run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
             if run is None:
@@ -152,7 +155,7 @@ class DecisionRepository:
         return task
 
     async def wait_for_confirmation(self, claim: TaskClaim, state: State, duration_ms: int) -> None:
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             task = await self._owned(session, claim)
             run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
             if run is None:
@@ -179,34 +182,24 @@ class DecisionRepository:
             run.duration_ms += duration_ms
 
     async def complete(self, claim: TaskClaim, state: State, run_id: str, duration_ms: int) -> None:
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             task = await self._owned(session, claim)
             run = await session.get(DecisionRun, run_id, with_for_update=True)
             if run is None:
                 raise AppError("NOT_FOUND", "决策记录不存在", 404)
-            candidate_ids = list(
-                (
-                    await session.scalars(
-                        select(PlaceCandidate.id).where(PlaceCandidate.decision_run_id == run.id)
-                    )
-                ).all()
-            )
+            self._persist_result(session, run, state)
             task.state = {key: value for key, value in state.items() if key != "lease_token"}
-            task.result_refs = [
-                {"kind": "place_candidate", "id": candidate_id} for candidate_id in candidate_ids
-            ]
             task.status = TaskStatus.succeeded.value
             task.phase = "completed"
             task.lease_token = None
             task.lease_until = None
             task.completed_at = now()
             run.duration_ms += duration_ms
-            if run.status != "completed":
-                run.status = "completed"
-                run.completed_at = now()
+            run.status = "completed"
+            run.completed_at = now()
 
     async def fail(self, claim: TaskClaim, code: str, message: str) -> bool:
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             task = await session.scalar(
                 select(Task)
                 .where(Task.id == claim.task_id, Task.lease_token == claim.lease_token)
@@ -221,6 +214,18 @@ class DecisionRepository:
             task.lease_token = None
             task.lease_until = None
             task.completed_at = now()
+            step = await session.scalar(
+                select(TaskStep)
+                .where(TaskStep.task_id == task.id, TaskStep.status == "running")
+                .order_by(TaskStep.ordinal.desc())
+                .limit(1)
+                .with_for_update()
+            )
+            if step is not None:
+                step.status = "failed"
+                step.error_code = code
+                step.error_message = message[:500]
+                step.completed_at = now()
             run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
             if run is not None and run.status != "completed":
                 run.status = "failed"
@@ -229,13 +234,7 @@ class DecisionRepository:
                 return True
             return False
 
-    async def persist(self, state: State) -> None:
-        claim = TaskClaim(task_id=str(state["task_id"]), lease_token=str(state["lease_token"]))
-        async with self.uow.write() as session:
-            await self._owned(session, claim)
-            run = await session.get(DecisionRun, state["decision_run_id"], with_for_update=True)
-            if run is None or run.status == "completed":
-                return
+    def _persist_result(self, session: AsyncSession, run: DecisionRun, state: State) -> None:
             for rank, raw in enumerate(state.get("places", []), 1):
                 place = Place.model_validate(raw).model_copy(
                     update={"candidate_id": uid(), "rank": rank}

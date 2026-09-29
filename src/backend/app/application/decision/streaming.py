@@ -49,22 +49,23 @@ class DecisionStreamService:
                     yield event
                     if event.type in {"result", "runFailed", "confirmationRequired"}:
                         return
-            data = await self.queries.get_for_user(user_id, run_id)
-            if data.status == "completed":
-                yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
-                return
-            if data.status == "awaitingConfirmation":
-                yield ConfirmationRequired(data=data.model_dump(mode="json", by_alias=True))
-                return
-            if data.status == "failed":
-                yield RunFailed(
-                    error=WorkflowError(
-                        code=data.error_code or "RUN_FAILED",
-                        message="推荐未完成，请检查服务或重试",
-                        retryable=True,
+            if task is None or task.status in {"succeeded", "waiting_confirmation", "failed"}:
+                data = await self.queries.get_for_user(user_id, run_id)
+                if data.status == "completed":
+                    yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
+                    return
+                if data.status == "awaitingConfirmation":
+                    yield ConfirmationRequired(data=data.model_dump(mode="json", by_alias=True))
+                    return
+                if data.status == "failed":
+                    yield RunFailed(
+                        error=WorkflowError(
+                            code=data.error_code or "RUN_FAILED",
+                            message="推荐未完成，请检查服务或重试",
+                            retryable=True,
+                        )
                     )
-                )
-                return
+                    return
             if time.monotonic() - last_heartbeat >= 15:
                 yield Heartbeat(timestamp=now())
                 last_heartbeat = time.monotonic()

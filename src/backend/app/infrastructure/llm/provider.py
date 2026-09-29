@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from langchain_core.exceptions import OutputParserException
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
+from openai import APIError
 from pydantic import Field, ValidationError
 
 from app.core.config import Settings
@@ -84,7 +85,7 @@ class OpenAICompatibleFoodDecisionLlm:
             return schema.model_validate(result)
         except (ValidationError, ValueError, OutputParserException):
             raise AppError("LLM_INVALID_OUTPUT", "模型输出未通过校验", 502) from None
-        except Exception:
+        except (APIError, TimeoutError):
             raise AppError("LLM_UNAVAILABLE", "模型服务暂时不可用", 502, True) from None
 
     async def parse_intent(self, text: str) -> Intent:

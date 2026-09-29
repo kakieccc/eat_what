@@ -38,9 +38,12 @@ class SignedIn:
 
 
 class AuthService:
-    def __init__(self, repository: AuthRepository, passwords: PasswordHasher) -> None:
+    def __init__(
+        self, repository: AuthRepository, passwords: PasswordHasher, session_days: int
+    ) -> None:
         self.repository = repository
         self.passwords = passwords
+        self.session_days = session_days
 
     @staticmethod
     def _tokens() -> tuple[str, str, str]:
@@ -57,7 +60,7 @@ class AuthService:
         token, csrf, token_hash = self._tokens()
         user = await self.repository.register(
             username, display_name, encoded,
-            token_hash, csrf, now() + timedelta(days=7),
+            token_hash, csrf, now() + timedelta(days=self.session_days),
         )
         return SignedIn(profile(user), token, csrf)
 
@@ -72,7 +75,7 @@ class AuthService:
             raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
         token, csrf, token_hash = self._tokens()
         await self.repository.create_session(
-            user.id, token_hash, csrf, now() + timedelta(days=7)
+            user.id, token_hash, csrf, now() + timedelta(days=self.session_days)
         )
         return SignedIn(profile(user), token, csrf)
 
@@ -101,7 +104,7 @@ class AuthService:
         token, csrf, token_hash = self._tokens()
         await self.repository.change_password(
             context.user.id, context.session_id, encoded,
-            token_hash, csrf, now() + timedelta(days=7),
+            token_hash, csrf, now() + timedelta(days=self.session_days),
         )
         return SignedIn(context.user, token, csrf)
 

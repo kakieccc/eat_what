@@ -36,25 +36,6 @@ class NodeCompleted(WorkflowModel):
     output_count: int | None = None
 
 
-class Progress(WorkflowModel):
-    type: Literal["progress"] = "progress"
-    message: str
-    percent: int | None = None
-
-
-class ProviderStatus(WorkflowModel):
-    type: Literal["providerStatus"] = "providerStatus"
-    operation: str
-    status: Literal["started", "succeeded", "failed"]
-    count: int | None = None
-
-
-class WarningEvent(WorkflowModel):
-    type: Literal["warning"] = "warning"
-    code: str
-    message: str
-
-
 class ResultEvent(WorkflowModel):
     type: Literal["result"] = "result"
     data: dict[str, JsonValue]
@@ -79,9 +60,6 @@ DecisionEvent = Annotated[
     RunStarted
     | NodeStarted
     | NodeCompleted
-    | Progress
-    | ProviderStatus
-    | WarningEvent
     | ResultEvent
     | ConfirmationRequired
     | RunFailed

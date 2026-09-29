@@ -16,7 +16,7 @@ class DecisionRun(IdentityMixin, Base):
         ForeignKey("discovery_sessions.id"), nullable=False, index=True
     )
     parent_decision_id: Mapped[str | None] = mapped_column(ForeignKey("decision_runs.id"))
-    workflow_version: Mapped[str] = mapped_column(String(32), default="3")
+    workflow_version: Mapped[str] = mapped_column(String(32), default="4")
     prompt_version: Mapped[str] = mapped_column(String(32), default="1")
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     refinement_action: Mapped[str] = mapped_column(String(64), default="")

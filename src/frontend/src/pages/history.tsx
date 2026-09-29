@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { request } from "../lib/api";
 import { useDraft } from "../lib/store";
-import { defaults, type Place, type Preferences, type Run } from "../lib/schemas";
+import { defaults, runSchema, type Place, type Preferences, type Run } from "../lib/schemas";
 import { useParams, useSearchParams } from "react-router-dom";
 type HistoryData = {
   items: {
@@ -138,7 +138,7 @@ export function Detail() {
     [key] = useState(() => crypto.randomUUID());
   const query = useQuery({
     queryKey: ["run", runId],
-    queryFn: () => request<Run>("/decision-runs/" + runId),
+    queryFn: () => request<Run>("/decision-runs/" + runId, undefined, "GET", undefined, undefined, runSchema),
     retry: false,
   });
   const run = query.data,

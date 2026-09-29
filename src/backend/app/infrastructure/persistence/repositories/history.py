@@ -18,15 +18,14 @@ from app.infrastructure.persistence.models import (
     PlaceCandidate,
     PlaceChoice,
 )
-from app.infrastructure.persistence.unit_of_work import UnitOfWork
 
 
 class HistoryRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
-        self.uow = UnitOfWork(sessions)
+        self.sessions = sessions
 
     async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             query = select(DiscoverySession).where(
                 DiscoverySession.user_id == user_id,
                 select(PlaceChoice.id)
@@ -117,7 +116,7 @@ class HistoryRepository:
             return HistoryPage(items=items, next_cursor=next_cursor)
 
     async def runs(self, user_id: str, session_id: str) -> list[str]:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             discovery = await session.get(DiscoverySession, session_id)
             if discovery is None or discovery.user_id != user_id:
                 raise AppError("NOT_FOUND", "记录不存在", 404)
@@ -132,5 +131,5 @@ class HistoryRepository:
             )
 
     async def ready(self) -> None:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             await session.execute(select(1))

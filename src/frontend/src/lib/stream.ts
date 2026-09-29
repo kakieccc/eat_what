@@ -61,6 +61,14 @@ export async function stream(
     decisionRunId: runId,
   });
 
+  await subscribe(runId, signal, onEvent);
+}
+
+export async function subscribe(
+  runId: string,
+  signal: AbortSignal,
+  onEvent: (event: DecisionEvent) => void,
+) {
   const response = await fetch(endpoint(`/decision-runs/${runId}/events`), {
     method: "GET",
     signal,

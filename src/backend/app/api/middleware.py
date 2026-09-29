@@ -13,11 +13,14 @@ from app.api.errors.handlers import error_response
 from app.core.errors import AppError
 
 
+# 处理跨域请求
 def _allowed_origins() -> list[str]:
     configured = os.environ.get(
         "CORS_ORIGINS",
-        dotenv_values(".env").get("CORS_ORIGINS") or "http://localhost:5173",
+        dotenv_values(".env").get("CORS_ORIGINS"),
     )
+    if not configured:
+        raise ValueError("CORS_ORIGINS is not configured")
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 

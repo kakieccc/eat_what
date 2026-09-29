@@ -85,7 +85,7 @@ class TaskStore:
         if not result:
             raise LostTaskLease("任务执行权已失效")
 
-    async def start_step(self, claim: TaskClaim, key: str, input_state: dict[str, object]) -> None:
+    async def start_step(self, claim: TaskClaim, key: str) -> None:
         current = now()
         async with self.sessions.begin() as session:
             task = await self._owned(session, claim)
@@ -107,8 +107,6 @@ class TaskStore:
                 await session.flush()
             step.status = "running"
             step.attempts += 1
-            step.input_state = self._strip_runtime_state(input_state)
-            step.output_state = {}
             step.error_code = None
             step.error_message = None
             step.started_at = current
@@ -143,7 +141,6 @@ class TaskStore:
                 )
                 session.add(step)
             step.status = "succeeded"
-            step.output_state = persisted
             step.completed_at = current
 
     async def append_event(self, task_id: str, event: BaseModel | dict[str, Any]) -> None:

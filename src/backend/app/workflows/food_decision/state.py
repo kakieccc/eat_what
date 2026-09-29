@@ -18,10 +18,8 @@ class DecisionState(TypedDict, total=False):
     changes: dict[str, Any]
     awaiting_confirmation: bool
     confirmation_answer: bool | None
-    resume_from: str | None
-    current_node: str
+    next_node: str
     filter_summary: dict[str, int]
-    persisted: bool
     already_completed: bool
 
 

@@ -7,8 +7,8 @@ import { FoodMap } from "../components/map";
 import { PlaceCard } from "../components/place-card";
 import { useDraft } from "../lib/store";
 import { request } from "../lib/api";
-import { stream } from "../lib/stream";
-import type { DecisionEvent, Run, Place } from "../lib/schemas";
+import { stream, subscribe } from "../lib/stream";
+import { runSchema, type DecisionEvent, type Run, type Place } from "../lib/schemas";
 export function Discover() {
   const draft = useDraft(),
     client = useQueryClient(),
@@ -16,6 +16,7 @@ export function Discover() {
     abort = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [polling, setPolling] = useState(true),
     [steps, setSteps] = useState<
       { node: string; label: string; done: boolean }[]
     >([]),
@@ -27,10 +28,10 @@ export function Discover() {
   const choiceKeys = useRef(new Map<string, string>());
   const runQuery = useQuery({
     queryKey: ["run", draft.runId],
-    queryFn: () => request<Run>("/decision-runs/" + draft.runId),
-    enabled: !!draft.runId,
+    queryFn: () => request<Run>("/decision-runs/" + draft.runId, undefined, "GET", undefined, undefined, runSchema),
+    enabled: !!draft.runId && polling && !busy,
     refetchInterval: (q) =>
-      q.state.data && ["pending", "running"].includes(q.state.data.status)
+      polling && q.state.data && ["pending", "running"].includes(q.state.data.status)
         ? 2000
         : false,
     retry: false,
@@ -48,10 +49,14 @@ export function Discover() {
         prev.map((s) => (s.node === event.node ? { ...s, done: true } : s)),
       );
     if (event.type === "result" || event.type === "confirmationRequired") {
+      setPolling(false);
       client.setQueryData(["run", event.data.decisionRunId], event.data);
       setSelected(event.data.places?.[0]?.id ?? null);
     }
-    if (event.type === "runFailed") setError(event.error.message);
+    if (event.type === "runFailed") {
+      setPolling(false);
+      setError(event.error.message);
+    }
   };
   const launch = async (
     path: string,
@@ -63,14 +68,17 @@ export function Discover() {
     const controller = new AbortController();
     abort.current = controller;
     setBusy(true);
+    setPolling(false);
     setError("");
     setSteps([]);
     setRoute(false);
     try {
       await stream(path, body, key, controller.signal, process);
     } catch (e) {
-      if (!controller.signal.aborted)
+      if (!controller.signal.aborted) {
+        setPolling(true);
         setError(e instanceof Error ? e.message : "推荐失败");
+      }
     } finally {
       if (abort.current === controller) setBusy(false);
     }
@@ -104,8 +112,11 @@ export function Discover() {
         value,
       });
   };
-  const resume = async (acceptChanges: boolean | null) => {
+  const resume = async (acceptChanges: boolean) => {
     if (!run) return;
+    abort.current?.abort();
+    const controller = new AbortController();
+    abort.current = controller;
     setBusy(true);
     setError("");
     try {
@@ -113,12 +124,19 @@ export function Discover() {
         `/decision-runs/${run.decisionRunId}`,
         { acceptChanges },
         "PATCH",
+        undefined,
+        controller.signal,
+        runSchema,
       );
       client.setQueryData(["run", run.decisionRunId], data);
+      await subscribe(run.decisionRunId, controller.signal, process);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "恢复失败");
+      if (!controller.signal.aborted) {
+        setPolling(true);
+        setError(e instanceof Error ? e.message : "恢复失败");
+      }
     } finally {
-      setBusy(false);
+      if (abort.current === controller) setBusy(false);
     }
   };
   const choose = async (place: Place) => {
@@ -214,10 +232,7 @@ export function Discover() {
           <p>这段话涉及硬约束变化。是否使用新条件？</p>
           <div>
             {Object.entries(
-              (run.confirmation?.changes ?? {}) as Record<
-                string,
-                { before: unknown; after: unknown }
-              >,
+              run.confirmation ?? {},
             ).map(([field, change]) => (
               <p key={field}>
                 <strong>
@@ -251,11 +266,6 @@ export function Discover() {
             </Button>
           </div>
         </section>
-      )}
-      {run && ["running", "pending"].includes(run.status) && !busy && (
-        <Button variant="outline" onClick={() => resume(null)}>
-          恢复执行
-        </Button>
       )}
       {run?.status === "failed" && (
         <div className="empty">

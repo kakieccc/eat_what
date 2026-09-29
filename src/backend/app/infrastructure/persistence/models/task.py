@@ -40,9 +40,6 @@ class Task(IdentityMixin, Base):
     phase: Mapped[str] = mapped_column(String(64), nullable=False, default="queued")
     request_id: Mapped[str] = mapped_column(String(36), nullable=False, default="")
     state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
-    result_refs: Mapped[list[dict[str, object]]] = mapped_column(
-        JSONB, nullable=False, default=list
-    )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lease_token: Mapped[str | None] = mapped_column(String(64))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -65,8 +62,6 @@ class TaskStep(IdentityMixin, Base):
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    input_state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
-    output_state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     error_code: Mapped[str | None] = mapped_column(String(64))
     error_message: Mapped[str | None] = mapped_column(String(500))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

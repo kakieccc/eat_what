@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     decision_timeout_seconds: float = 20
     task_lease_seconds: int = 60
     task_poll_seconds: float = 1
+    auth_session_days: int = Field(default=30, ge=1)
     auth_cookie_secure: bool = True
     app_env: str = "production"
 

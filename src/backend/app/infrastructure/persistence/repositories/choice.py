@@ -15,12 +15,11 @@ from app.infrastructure.persistence.models import (
     PlaceCandidate,
     PlaceChoice,
 )
-from app.infrastructure.persistence.unit_of_work import UnitOfWork
 
 
 class ChoiceRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
-        self.uow = UnitOfWork(sessions)
+        self.sessions = sessions
 
     async def choose(
         self,
@@ -30,7 +29,7 @@ class ChoiceRepository:
         idempotency_key: str,
     ) -> dict[str, str]:
         body = {"candidate_id": candidate_id, "feedback": feedback}
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
                 {"key": lock_id(user_id + idempotency_key + "choice")},

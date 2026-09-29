@@ -6,15 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.preferences.models import Preferences
 from app.infrastructure.persistence.mappers import preferences_from_row
 from app.infrastructure.persistence.models import Preference
-from app.infrastructure.persistence.unit_of_work import UnitOfWork
 
 
 class PreferencesRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
-        self.uow = UnitOfWork(sessions)
+        self.sessions = sessions
 
     async def get(self, user_id: str) -> Preferences:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             row = await session.scalar(select(Preference).where(Preference.user_id == user_id))
             return preferences_from_row(row)
 
@@ -27,7 +26,7 @@ class PreferencesRepository:
             "typical_max_walking_minutes": preferences.max_walking_minutes,
             "preferred_tags": preferences.desired_tags,
         }
-        async with self.uow.write() as session:
+        async with self.sessions.begin() as session:
             row = await session.scalar(
                 select(Preference).where(Preference.user_id == user_id).with_for_update()
             )

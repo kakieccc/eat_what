@@ -12,6 +12,7 @@ DESCRIPTIONS = {
     409: "Resource state conflict",
     422: "Request validation failed",
     429: "Rate limited",
+    500: "Internal server error",
     502: "Upstream service failed",
     503: "Dependency unavailable",
     504: "Operation timed out",

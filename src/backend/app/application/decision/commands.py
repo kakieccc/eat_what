@@ -73,7 +73,7 @@ class DecisionCommandService:
                 session_id = await tx.create_discovery(request)
             run_id = await tx.create_run(session_id, request, parent_id, excluded, action)
             state: State = {
-                "schema_version": 3,
+                "schema_version": 4,
                 "decision_run_id": run_id,
                 "request": request.model_dump(mode="json"),
                 "excluded": excluded,
@@ -81,7 +81,7 @@ class DecisionCommandService:
                 "places": [],
                 "filter_summary": {},
                 "awaiting_confirmation": False,
-                "resume_from": None,
+                "next_node": "parse_intent" if request.request_text else "search_places",
             }
             if old_cuisines is not None:
                 state["old_cuisines"] = old_cuisines
@@ -117,7 +117,7 @@ class DecisionCommandService:
                 {
                     "confirmation_answer": accept_changes,
                     "awaiting_confirmation": False,
-                    "resume_from": "confirm_intent",
+                    "next_node": "confirm_intent",
                 }
             )
             await tx.supersede(snapshot.waiting_task_id)

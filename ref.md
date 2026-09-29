@@ -90,7 +90,7 @@ JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta":
 | `GET /discovery-sessions/{session_id}/decision-runs` | 读取 Session 下的 Run |
 | `GET /preferences`、`PUT /preferences` | 读取、替换当前偏好 |
 
-没有同步完成版 `POST /decisions`，也没有 POST SSE、单独 `/evaluations/summary` 或 `GET /discovery-sessions/{id}`。创建 Run 时返回值可能仍为 `pending`，客户端随后订阅事件或查询资源。Run 状态为 `pending`、`running`、`awaitingConfirmation`、`completed`、`failed`。`PATCH` 恢复接口会等待完成、再次确认或超时。SSE 事件包括 `runStarted`、`nodeStarted`、`nodeCompleted`、`providerStatus`、`progress`、`warning`、`confirmationRequired`、`result`、`runFailed`、`heartbeat`。事件由 TaskEvent 保存，断流后重新 GET 可重放；终态也可从 Run 查询恢复。
+没有同步完成版 `POST /decisions`，也没有 POST SSE、单独 `/evaluations/summary` 或 `GET /discovery-sessions/{id}`。创建 Run 时返回值可能仍为 `pending`，客户端随后订阅事件或查询资源。Run 状态为 `pending`、`running`、`awaitingConfirmation`、`completed`、`failed`。`PATCH` 恢复接口接受确认后立即返回 `202`，客户端继续订阅 SSE；事件包括 `runStarted`、`nodeStarted`、`nodeCompleted`、`confirmationRequired`、`result`、`runFailed`、`heartbeat`。事件由 TaskEvent 保存，断流后重新 GET 可重放；终态也可从 Run 查询恢复。
 
 请求示例（这里只示范输入，不手写虚构的餐厅响应）：
 
@@ -121,19 +121,19 @@ JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta":
 当前名称是 `workflows/food_decision`：节点和高德调用顺序由代码控制，不是自由规划 ReAct Agent。节点名为：
 
 ```text
-load_context → [parse_intent → confirm_intent → await_confirmation?]
-→ search_places → normalize_places → filter_places
-→ [无候选: persist_empty_result]
-→ enrich_routes → [无候选: persist_empty_result]
+[parse_intent →] confirm_intent
+→ search_places → filter_places
+→ [无候选: 结束]
+→ enrich_routes → [无候选: 结束]
 → score_places → rerank_places → select_diverse
-→ generate_explanations → persist_result
+→ generate_explanations → 结束
 ```
 
-自然语言为空时跳过解析；解析出的步行时间或预算变更可能进入 `await_confirmation`。确认通过新 `resume` Task 继续；不使用 LangGraph Checkpointer 或 `Command(resume=...)`。持久化的工作流版本目前为 `3`；迁移节点名或 State 格式时需考虑已有 Task 的恢复。
+自然语言为空时跳过解析；解析出的步行时间或预算变更可能进入确认状态。确认通过新 Task 继续；不使用 LangGraph Checkpointer 或 `Command(resume=...)`。持久化的工作流版本目前为 `4`；旧的未完成 Task 在迁移时标记为 `WORKFLOW_UPGRADED`，迁移节点名或 State 格式时需考虑已有 Task 的恢复。
 
-`DecisionState` 当前字段：`schema_version`、`task_id`、`decision_run_id`、`request`、`places`、`excluded`、`recent`、`old_cuisines`、`action`、`intent`、`changes`、`awaiting_confirmation`、`confirmation_answer`、`resume_from`、`current_node`、`filter_summary`、`persisted`，以及执行期的 `lease_token`、`already_completed`。State 仅保存可 JSON 序列化的恢复数据，不应包含数据库 Session、Client、Key、完整 Prompt 或完整高德 Raw Payload。历史展示从业务表读取。
+`DecisionState` 当前字段：`schema_version`、`task_id`、`decision_run_id`、`request`、`places`、`excluded`、`recent`、`old_cuisines`、`action`、`intent`、`changes`、`awaiting_confirmation`、`confirmation_answer`、`next_node`、`filter_summary`，以及执行期的 `lease_token`、`already_completed`。State 仅保存可 JSON 序列化的恢复数据，不应包含数据库 Session、Client、Key、完整 Prompt 或完整高德 Raw Payload。历史展示从业务表读取。
 
-Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、lease、State 与结果引用；TaskStep 保存节点状态；TaskEvent 保存有序业务事件。数据库租约控制并发领取和故障后重领。外部调用需受超时与并发上限约束，失败按明确错误终止 Run，不凭空生成备用结果。
+Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、lease 与 State；TaskStep 保存节点状态摘要；TaskEvent 保存有序业务事件。数据库租约控制并发领取和故障后重领。外部调用需受超时与并发上限约束，失败按明确错误终止 Run，不凭空生成备用结果。
 
 ### 5.2 领域模型与规则
 
@@ -147,13 +147,13 @@ Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、
 
 ### 5.3 数据库边界
 
-当前表包括 `preferences`、`discovery_sessions`、`decision_runs`、`decision_confirmations`、`place_candidates`、`place_choices`、`place_cache`、`route_cache`、`idempotency_records`、`tasks`、`task_steps`、`task_events`。Session 记录 `radius_meters` 等输入；Run 记录 `filter_summary`、工作流版本与终态；Candidate 保存地点及路线快照；Choice 使用 `created_at` 记录创建时间；Task 另有 `result_refs`。当前表都没有 `user_id`。创建 Session、Run、Task 和幂等记录在一个事务中；Task 状态使用短事务。没有数据库迁移框架，后续增加用户归属时需要迁移方案。
+当前表包括 `preferences`、`discovery_sessions`、`decision_runs`、`decision_confirmations`、`place_candidates`、`place_choices`、`place_cache`、`route_cache`、`idempotency_records`、`tasks`、`task_steps`、`task_events`。Session 记录 `radius_meters` 等输入；Run 记录 `filter_summary`、工作流版本与终态；Candidate 保存地点及路线快照；Choice 使用 `created_at` 记录创建时间。当前表都没有 `user_id`。创建 Session、Run、Task 和幂等记录在一个事务中；Task 状态使用短事务。Alembic 迁移负责工作流状态升级，后续增加用户归属时仍需要新的迁移方案。
 
 ## 6. 前端当前流程与体验目标
 
 实际路由为 `/`、`/map`、`/discover`、`/decision-runs/:runId`、`/history`、`/profile`。首页包含条件输入，地图页负责选点，Discover 页展示地图、候选与进度，历史页和详情页展示已保存的选择。Profile 组件目前位于 `pages/home.tsx`。不存在 `/evaluation` 页面。
 
-前端使用 `lib/api.ts` 统一请求，`lib/stream.ts` 先 POST 创建 Run，再 GET `/decision-runs/{id}/events` 消费 SSE，Zod 校验事件。断流或终态恢复应通过 GET Run；前端不存在旧文档所述 `useDecisionStream` Hook。地图使用浏览器高德 JS Key，服务端高德 Web Service Key 只在后端。地图失败、空结果、缺失字段和上游错误都应有明确 UI；候选卡显示来源可证的评分、人均、步行信息与风险提示。移动端以地图和结果卡为核心，触控、可读性、减少动画等仍是体验目标，不代表每项已经验收。
+前端使用 `lib/api.ts` 统一请求，`lib/stream.ts` 先 POST 创建 Run，再 GET `/decision-runs/{id}/events` 消费 SSE，Zod 校验完整 Run 响应和事件。断流或终态恢复应通过 GET Run；前端不存在旧文档所述 `useDecisionStream` Hook。地图使用浏览器高德 JS Key，服务端高德 Web Service Key 只在后端。地图失败、空结果、缺失字段和上游错误都应有明确 UI；候选卡显示来源可证的评分、人均、步行信息与风险提示。移动端以地图和结果卡为核心，触控、可读性、减少动画等仍是体验目标，不代表每项已经验收。
 
 ## 7. 环境配置与验证
 

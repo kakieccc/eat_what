@@ -44,6 +44,7 @@ export async function request<T>(
   method = body === undefined ? "GET" : "POST",
   key?: string,
   signal?: AbortSignal,
+  schema?: z.ZodType<T>,
 ): Promise<T> {
   let response: Response;
   try {
@@ -78,5 +79,5 @@ export async function request<T>(
       payload.error?.code ?? "UNKNOWN",
     );
   }
-  return payload.data as T;
+  return schema ? schema.parse(payload.data) : payload.data as T;
 }

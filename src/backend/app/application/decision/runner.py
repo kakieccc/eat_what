@@ -11,6 +11,7 @@ from app.application.decision.queries import DecisionQueryService
 from app.application.task.models import LostTaskLease, TaskClaim
 from app.application.task.ports import TaskStore
 from app.core.errors import AppError
+from app.domain.decision.models import DecisionRequest
 from app.domain.decision.ports import FoodDecisionLlm
 from app.domain.places.ports import GeoPlaceProvider
 from app.workflows.food_decision.events import (
@@ -44,9 +45,7 @@ class DecisionRunner:
         self.queries = queries
         self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
-        self.graph = build_graph(
-            amap, llm, repository.persist, self.emit, self.step_started, self.save_state
-        )
+        self.graph = build_graph(amap, llm, self.emit, self.step_started, self.save_state)
 
     async def execute_claim(self, claim: TaskClaim) -> None:
         graph_job = asyncio.create_task(self._execute_task(claim))
@@ -81,6 +80,9 @@ class DecisionRunner:
         task_id, run_id, request_id, state, elapsed_ms = await self.repository.prepare(claim)
         if state.get("already_completed"):
             return
+        if state.get("schema_version") != 4:
+            raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
+        DecisionRequest.model_validate(state["request"])
         await self.emit(task_id, RunStarted(request_id=request_id, decision_run_id=run_id))
         remaining = self.timeout_seconds - elapsed_ms / 1000
         async with asyncio.timeout(max(0.001, remaining)):
@@ -99,7 +101,6 @@ class DecisionRunner:
         await self.tasks.start_step(
             TaskClaim(task_id=str(state["task_id"]), lease_token=str(state["lease_token"])),
             name,
-            dict(state),
         )
 
     async def save_state(self, state: State, phase: str) -> None:
@@ -130,12 +131,12 @@ class DecisionRunner:
             error
             if isinstance(error, AppError)
             else AppError(
-                "DECISION_TIMEOUT" if is_timeout else "DEPENDENCY_UNAVAILABLE",
+                "DECISION_TIMEOUT" if is_timeout else "INTERNAL_ERROR",
                 "本次推荐超时，请重试或减少条件"
                 if is_timeout
-                else "执行失败，请检查必要服务后重试",
-                504 if is_timeout else 503,
-                True,
+                else "执行失败，请重新推荐",
+                504 if is_timeout else 500,
+                is_timeout,
             )
         )
         updated = await self.repository.fail(claim, failure.code, failure.message)
@@ -150,13 +151,4 @@ class DecisionRunner:
                     )
                 ),
             )
-        log.error(
-            json.dumps(
-                {
-                    "event": "taskFailed",
-                    "taskId": claim.task_id,
-                    "errorCode": failure.code,
-                    "exceptionType": type(error).__name__,
-                }
-            )
-        )
+        log.error("Task %s failed with %s", claim.task_id, failure.code, exc_info=error)

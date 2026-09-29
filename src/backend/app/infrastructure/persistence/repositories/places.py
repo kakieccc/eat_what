@@ -5,15 +5,14 @@ from app.core.errors import AppError
 from app.domain.places.models import Place
 from app.infrastructure.persistence.mappers import place_from_candidate
 from app.infrastructure.persistence.models import DecisionRun, DiscoverySession, PlaceCandidate
-from app.infrastructure.persistence.unit_of_work import UnitOfWork
 
 
 class PlacesRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
-        self.uow = UnitOfWork(sessions)
+        self.sessions = sessions
 
     async def read(self, user_id: str, place_key: str) -> Place:
-        async with self.uow.read() as session:
+        async with self.sessions() as session:
             candidate = await session.scalar(
                 select(PlaceCandidate)
                 .join(DecisionRun, DecisionRun.id == PlaceCandidate.decision_run_id)

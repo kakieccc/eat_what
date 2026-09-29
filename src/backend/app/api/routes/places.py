@@ -31,7 +31,7 @@ async def list_places(
     return Envelope(data=places)
 
 
-@router.get("/{place_key}", responses=error_responses(401, 404, 422, 502, 503))
+@router.get("/{place_key}", responses=error_responses(401, 404, 422, 503))
 async def get_place(
     place_key: str,
     services: ContainerDependency,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Request, Response
 from starlette.responses import StreamingResponse
 
@@ -16,30 +14,8 @@ from app.api.schemas.common import Envelope
 from app.api.schemas.decisions import DecisionCreateRequest, DecisionRunUpdateRequest
 from app.api.sse import encode
 from app.application.decision.models import DecisionRunResponse, RefinementRequest
-from app.core.errors import AppError
 
 router = APIRouter(prefix="/decision-runs", tags=["decision-runs"])
-
-
-async def wait_result(
-    services: ContainerDependency, user_id: str, run_id: str
-) -> DecisionRunResponse:
-    deadline = asyncio.get_running_loop().time() + services.settings.decision_timeout_seconds + 5
-    while True:
-        result = await services.decision_queries.get_for_user(user_id, run_id)
-        if result.status in {"completed", "awaitingConfirmation"}:
-            return result
-        if result.status == "failed":
-            code = result.error_code or "RUN_FAILED"
-            raise AppError(
-                code,
-                "推荐未完成，请检查服务或重试",
-                504 if code == "DECISION_TIMEOUT" else 502,
-                True,
-            )
-        if asyncio.get_running_loop().time() >= deadline:
-            raise AppError("DECISION_TIMEOUT", "本次推荐超时，请稍后查询结果", 504, True)
-        await asyncio.sleep(0.2)
 
 
 @router.post("", status_code=201, responses=error_responses(401, 403, 409, 422, 503))
@@ -111,7 +87,7 @@ async def create_decision_refinement(
 
 
 @router.patch(
-    "/{run_id}", responses=error_responses(401, 403, 404, 409, 422, 502, 503, 504)
+    "/{run_id}", status_code=202, responses=error_responses(401, 403, 404, 409, 422, 503)
 )
 async def update_decision_run(
     run_id: str,
@@ -128,4 +104,4 @@ async def update_decision_run(
         idempotency_key,
         request.state.request_id,
     )
-    return Envelope(data=await wait_result(services, user.user.id, run_id))
+    return Envelope(data=await services.decision_queries.get_for_user(user.user.id, run_id))
