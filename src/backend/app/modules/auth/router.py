@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Request, Response
 
 from app.api.dependencies import SettingsDependency
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.dependencies import (

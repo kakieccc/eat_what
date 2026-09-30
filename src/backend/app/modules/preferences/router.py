@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
 from app.modules.preferences.dependencies import PreferencesServiceDependency
 from app.modules.preferences.schemas import Preferences

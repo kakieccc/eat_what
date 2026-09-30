@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from app.api.errors.handlers import register_exception_handlers
+from app.api.errors import register_exception_handlers
 from app.api.middleware import register_middlewares
 from app.api.router import router
 from app.bootstrap import lifespan
 from app.core.config import Settings
-from app.infrastructure.persistence.registry import register_models
+from app.infrastructure.database.registry import register_models
 
 
 def create_app() -> FastAPI:

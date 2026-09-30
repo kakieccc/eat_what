@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.base import Base, IdentityMixin
+from app.infrastructure.database.base import Base, IdentityMixin
 
 
 class PlaceChoice(IdentityMixin, Base):

@@ -21,11 +21,6 @@ def idempotency_key(
 ) -> str:
     return value
 
-
-ContainerDependency = Annotated[Container, Depends(container)]
-IdempotencyDependency = Annotated[str, Depends(idempotency_key)]
-
-
 def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
@@ -33,6 +28,7 @@ def get_settings(request: Request) -> Settings:
 def get_sessions(services: ContainerDependency) -> async_sessionmaker[AsyncSession]:
     return services.sessions
 
-
+ContainerDependency = Annotated[Container, Depends(container)]
+IdempotencyDependency = Annotated[str, Depends(idempotency_key)]
 SettingsDependency = Annotated[Settings, Depends(get_settings)]
 SessionsDependency = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessions)]

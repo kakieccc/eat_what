@@ -2,8 +2,8 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.api.dependencies import SessionsDependency
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 
 router = APIRouter(prefix="/health", tags=["health"])
 

@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
-from app.api.errors.models import ErrorBody, ErrorEnvelope
+from app.api.schemas import ErrorEnvelope
 from app.core.errors import AppError
 
 log = logging.getLogger("food")
@@ -22,11 +22,11 @@ def error_response(
     details: dict[str, Any] | None = None,
 ) -> JSONResponse:
     body = ErrorEnvelope(
-        error=ErrorBody(
-            code=error.code,
-            message=error.message,
-            details={"retryable": error.retryable, **(details or {})},
-        ),
+        error={
+            "code": error.code,
+            "message": error.message,
+            "details": {"retryable": error.retryable, **(details or {})},
+        },
         meta={"requestId": getattr(request.state, "request_id", "")},
     )
     return JSONResponse(body.model_dump(mode="json", by_alias=True), status_code=error.status)
@@ -75,3 +75,25 @@ def register_exception_handlers(app: FastAPI) -> None:
             request,
             AppError("INTERNAL_ERROR", "服务暂时无法完成请求", 500),
         )
+
+
+DESCRIPTIONS = {
+    400: "Invalid request",
+    401: "Authentication required",
+    403: "Forbidden",
+    404: "Resource not found",
+    409: "Resource state conflict",
+    422: "Request validation failed",
+    429: "Rate limited",
+    500: "Internal server error",
+    502: "Upstream service failed",
+    503: "Dependency unavailable",
+    504: "Operation timed out",
+}
+
+
+def error_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
+    return {
+        status: {"model": ErrorEnvelope, "description": DESCRIPTIONS[status]}
+        for status in statuses
+    }

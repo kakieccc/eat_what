@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeVar
 
+from app.core.models import Model
 from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse, Intent
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
@@ -77,6 +78,13 @@ class DecisionRepository(Protocol):
         self, claim: TaskClaim, state: State, run_id: str, duration_ms: int
     ) -> None: ...
     async def fail(self, claim: TaskClaim, code: str, message: str) -> bool: ...
+
+
+T = TypeVar("T", bound=Model)
+
+
+class StructuredLlm(Protocol):
+    async def structured(self, schema: type[T], prompt: str, data: object) -> T: ...
 
 
 class FoodDecisionLlm(Protocol):

@@ -2,7 +2,6 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from app.api.schemas.common import ApiModel
 from app.core.models import Model
 
 
@@ -13,7 +12,7 @@ class UserProfile(Model):
     created_at: datetime
 
 
-class RegisterRequest(ApiModel):
+class RegisterRequest(Model):
     username: str = Field(pattern=r"^[A-Za-z0-9_]{3,32}$")
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(min_length=1, max_length=40)
@@ -27,12 +26,12 @@ class RegisterRequest(ApiModel):
         return result
 
 
-class LoginRequest(ApiModel):
+class LoginRequest(Model):
     username: str = Field(pattern=r"^[A-Za-z0-9_]{3,32}$")
     password: str
 
 
-class ProfileUpdateRequest(ApiModel):
+class ProfileUpdateRequest(Model):
     display_name: str = Field(min_length=1, max_length=40)
 
     @field_validator("display_name")
@@ -44,11 +43,11 @@ class ProfileUpdateRequest(ApiModel):
         return result
 
 
-class ChangePasswordRequest(ApiModel):
+class ChangePasswordRequest(Model):
     current_password: str
     new_password: str = Field(min_length=8, max_length=128)
 
 
-class AuthPayload(ApiModel):
+class AuthPayload(Model):
     user: UserProfile
     csrf_token: str

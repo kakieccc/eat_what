@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     amap_cache_ttl_seconds: int = 600
     amap_route_cache_ttl_seconds: int = 300
     llm_timeout_seconds: float = 10
+    llm_max_retries: int = Field(default=1, ge=0)
+    llm_temperature: float = Field(default=0, ge=0, le=2)
     decision_timeout_seconds: float = 20
     task_lease_seconds: int = 60
     task_poll_seconds: float = 1

@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue
 
-from app.api.schemas.common import ApiModel
 from app.core.models import Model
 from app.modules.location.schemas import Origin
 from app.modules.places.schemas import Place
@@ -21,6 +20,19 @@ class Intent(Model):
     desired_tags: list[str] = Field(default_factory=list, max_length=5)
     max_walking_minutes: int | None = Field(default=None, ge=1, le=60)
     budget_max: float | None = Field(default=None, ge=0, le=10000)
+
+
+class Ranking(Model):
+    place_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class Explanation(Model):
+    place_id: str
+    fragments: list[str] = Field(min_length=1, max_length=3)
+
+
+class Explanations(Model):
+    places: list[Explanation] = Field(min_length=1, max_length=3)
 
 
 class ConfirmationChange(Model):
@@ -45,7 +57,7 @@ class DecisionCreateRequest(DecisionRequest):
     pass
 
 
-class DecisionRunUpdateRequest(ApiModel):
+class DecisionRunUpdateRequest(Model):
     accept_changes: bool | None = None
 
 

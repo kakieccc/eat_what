@@ -3,55 +3,52 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
-from pydantic.alias_generators import to_camel
+from pydantic import Field, JsonValue
+
+from app.core.models import Model
 
 
-class WorkflowModel(BaseModel):
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
-
-
-class WorkflowError(WorkflowModel):
+class WorkflowError(Model):
     code: str
     message: str
     retryable: bool = False
 
 
-class RunStarted(WorkflowModel):
+class RunStarted(Model):
     type: Literal["runStarted"] = "runStarted"
     request_id: str
     decision_run_id: str
 
 
-class NodeStarted(WorkflowModel):
+class NodeStarted(Model):
     type: Literal["nodeStarted"] = "nodeStarted"
     node: str
     label: str
 
 
-class NodeCompleted(WorkflowModel):
+class NodeCompleted(Model):
     type: Literal["nodeCompleted"] = "nodeCompleted"
     node: str
     duration_ms: int
     output_count: int | None = None
 
 
-class ResultEvent(WorkflowModel):
+class ResultEvent(Model):
     type: Literal["result"] = "result"
     data: dict[str, JsonValue]
 
 
-class ConfirmationRequired(WorkflowModel):
+class ConfirmationRequired(Model):
     type: Literal["confirmationRequired"] = "confirmationRequired"
     data: dict[str, JsonValue]
 
 
-class RunFailed(WorkflowModel):
+class RunFailed(Model):
     type: Literal["runFailed"] = "runFailed"
     error: WorkflowError
 
 
-class Heartbeat(WorkflowModel):
+class Heartbeat(Model):
     type: Literal["heartbeat"] = "heartbeat"
     timestamp: datetime
 

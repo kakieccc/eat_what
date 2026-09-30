@@ -1,8 +1,8 @@
 from pydantic import Field
 
-from app.api.schemas.common import ApiModel
+from app.core.models import Model
 
 
-class PlaceChoiceRequest(ApiModel):
+class PlaceChoiceRequest(Model):
     candidate_id: str = Field(min_length=1, max_length=100)
     feedback: str = Field(default="", max_length=300)

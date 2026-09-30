@@ -55,23 +55,23 @@ src/
 │   └── e2e/
 └── backend/
     └── app/
-        ├── api/             # 公共路由汇总、Schema、错误、健康检查与 SSE 帧编码
+        ├── api/             # 公共路由汇总、Schema、错误、健康检查与中间件（扁平结构）
         ├── modules/         # auth、choice、decision、history、location、places、preferences、task
         │   └── decision/workflow/  # LangGraph State、节点、Graph、事件与 Prompt
-        ├── infrastructure/  # amap、llm、auth、共享 persistence 设施
+        ├── infrastructure/  # amap、llm、auth、共享 database 设施
         ├── core/            # 配置、时钟、错误、ID、业务模型基类
         ├── container.py     # 进程级共享服务引用
         ├── bootstrap.py     # 进程生命周期与具体依赖组装
         └── main.py          # FastAPI 应用入口
 ```
 
-代码按业务模块组织，模块内部保留路由、业务类型与规则、服务、仓储和 ORM 的职责区分；业务类型与纯规则不导入 HTTP、ORM 或 LangGraph。业务路由通过模块的 `dependencies.py` 注入 service。数据库连接与 ORM 基类共用，`infrastructure/persistence/registry.py` 显式注册全部模块的表。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
+代码按业务模块组织，模块内部保留路由、业务类型与规则、服务、仓储和 ORM 的职责区分；业务类型与纯规则不导入 HTTP、ORM 或 LangGraph。业务路由通过模块的 `dependencies.py` 注入 service。数据库连接与 ORM 基类共用，`infrastructure/database/registry.py` 显式注册全部模块的表。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
 
 每次数据库操作使用独立 `AsyncSession`，并行路线请求不共享 Session。创建、调整、确认恢复、选择地点通过各自的事务上下文保证跨表原子性。Task 领取、心跳、状态和事件使用短事务；高德与 LLM 调用期间不持有数据库事务。当前 Worker 与 API 运行在同一进程生命周期，后续扩大容量时需评估拆分 Worker 与 API 进程、连接池和上游配额。
 
 ## 4. 当前 `/api/v2` 契约
 
-JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta": {} }`；错误包装为 `error` 与 `meta`。服务端生成或透传 `X-Request-ID`，写操作按接口使用 `Idempotency-Key`。具体字段和状态码以 `/openapi.json` 与 `app/api` 实现为准。
+JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta": {} }`；错误包装为 `error` 与 `meta`。服务端生成或透传 `X-Request-ID`，写操作按接口使用 `Idempotency-Key`。具体字段和状态码以 `/openapi.json` 与各模块的 router/schema 实现为准；公共 HTTP 支持位于 `app/api`，决策 SSE 帧编码位于 `modules/decision/sse.py`。
 
 | 方法与路径（均以 `/api/v2` 为前缀） | 用途 |
 |---|---|
@@ -143,7 +143,7 @@ Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、
 
 确定性代码负责排除已排除地点、超出搜索半径、明确排除的菜系、明确关闭且偏好营业中的地点、已知人均超过预算上限和步行路线超时的地点。人均、评分或营业状态未知时保留未知与警告，不宣称满足条件。路线必须来自高德步行规划，不能把直线距离换算成精确步行时间。当前没有“严格预算”“严格营业状态”的请求开关；若产品需要，应另行设计契约。
 
-评分由 `modules/decision/rules/policies.py` 的七项权重计算：偏好 0.28、步行 0.22、预算 0.18、评分 0.14、营业可信度 0.06、新颖性 0.05、数据完整度 0.07。调整动作改变对应权重或排除集；多样性逻辑尽量避免同品牌、同菜系占满三个位置。LLM 只解析受限偏好、在已有候选中重排并生成可核实理由，不修改 POI 事实或硬约束。`FoodDecisionLlm` 与 `GeoPlaceProvider` 在所属模块定义 Protocol，分别由 `infrastructure/llm` 和 `infrastructure/amap` 实现。
+评分由 `modules/decision/rules/policies.py` 的七项权重计算：偏好 0.28、步行 0.22、预算 0.18、评分 0.14、营业可信度 0.06、新颖性 0.05、数据完整度 0.07。调整动作改变对应权重或排除集；多样性逻辑尽量避免同品牌、同菜系占满三个位置。LLM 只解析受限偏好、在已有候选中重排并生成可核实理由，不修改 POI 事实或硬约束。`FoodDecisionLlm` 由 `decision/service/llm.py` 中的 `DecisionLlmService` 实现，负责 Prompt 输入组织和业务结果处理；`decision/rules/llm.py` 集中校验菜系、候选排列与理由证据。服务通过 `StructuredLlm` 协议调用 `infrastructure/llm` 的通用结构化适配器。`GeoPlaceProvider` 仍由 `infrastructure/amap` 实现。
 
 ### 5.3 数据库边界
 

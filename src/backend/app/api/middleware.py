@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from app.api.errors.handlers import error_response
+from app.api.errors import error_response
 from app.core.config import Settings
 from app.core.errors import AppError
 

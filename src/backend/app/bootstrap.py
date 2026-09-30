@@ -14,14 +14,15 @@ from app.container import Container
 from app.core.config import Settings
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
 from app.infrastructure.auth.passwords import Argon2PasswordHasher
-from app.infrastructure.llm.provider import OpenAICompatibleFoodDecisionLlm
-from app.infrastructure.persistence.session import create_sessions, engine_of
+from app.infrastructure.database.session import create_sessions, engine_of
+from app.infrastructure.llm.provider import OpenAICompatibleLlm
 from app.modules.auth.repository import SqlAuthRepository
 from app.modules.auth.service import AuthService
 from app.modules.choice.repository import ChoiceRepository
 from app.modules.choice.service import ChoiceService
 from app.modules.decision.repository.repository import DecisionRepository
 from app.modules.decision.service.commands import DecisionCommandService
+from app.modules.decision.service.llm import DecisionLlmService
 from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.decision.service.runner import DecisionRunner
 from app.modules.decision.service.streaming import DecisionStreamService
@@ -42,7 +43,7 @@ def build_container(
     client: httpx.AsyncClient,
 ) -> Container:
     amap = AmapGeoPlaceProvider(client, sessions, settings)
-    llm = OpenAICompatibleFoodDecisionLlm(settings)
+    llm = DecisionLlmService(OpenAICompatibleLlm(settings))
     repository = DecisionRepository(sessions, settings.llm_model)
     auth = AuthService(
         SqlAuthRepository(sessions), Argon2PasswordHasher(), settings.auth_session_days

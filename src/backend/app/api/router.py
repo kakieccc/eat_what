@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.errors.responses import error_responses
-from app.api.routes.health import router as health_router
+from app.api.errors import error_responses
+from app.api.health import router as health_router
 from app.modules.auth.router import router as auth_router
 from app.modules.choice.router import router as choices_router
 from app.modules.decision.router import router as decision_runs_router

@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.base import Base, IdentityMixin
+from app.infrastructure.database.base import Base, IdentityMixin
 
 
 class User(IdentityMixin, Base):

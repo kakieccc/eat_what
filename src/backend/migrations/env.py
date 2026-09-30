@@ -8,8 +8,8 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import Settings
-from app.infrastructure.persistence.base import Base
-from app.infrastructure.persistence.registry import register_models
+from app.infrastructure.database.base import Base
+from app.infrastructure.database.registry import register_models
 
 config = context.config
 if config.config_file_name:

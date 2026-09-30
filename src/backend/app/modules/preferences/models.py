@@ -6,7 +6,7 @@ from sqlalchemy import ForeignKey, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.infrastructure.persistence.base import Base, IdentityMixin
+from app.infrastructure.database.base import Base, IdentityMixin
 
 
 class Preference(IdentityMixin, Base):

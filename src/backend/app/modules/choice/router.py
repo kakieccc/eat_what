@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
 from app.api.dependencies import IdempotencyDependency
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 from app.modules.auth.dependencies import MutationUserDependency
 from app.modules.choice.dependencies import ChoiceServiceDependency
 from app.modules.choice.schemas import PlaceChoiceRequest

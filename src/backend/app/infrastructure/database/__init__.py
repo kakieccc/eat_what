@@ -1,0 +1,1 @@
+"""Shared PostgreSQL database infrastructure."""

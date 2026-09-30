@@ -4,9 +4,8 @@ from fastapi import APIRouter, Request, Response
 from starlette.responses import StreamingResponse
 
 from app.api.dependencies import IdempotencyDependency
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
-from app.api.sse import encode
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
 from app.modules.decision.dependencies import (
     DecisionCommandsDependency,
@@ -19,6 +18,7 @@ from app.modules.decision.schemas import (
     DecisionRunUpdateRequest,
     RefinementRequest,
 )
+from app.modules.decision.sse import encode
 
 router = APIRouter(prefix="/decision-runs", tags=["decision-runs"])
 

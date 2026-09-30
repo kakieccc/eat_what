@@ -2,8 +2,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.api.errors.responses import error_responses
-from app.api.schemas.common import Envelope
+from app.api.errors import error_responses
+from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency
 from app.modules.location.dependencies import LocationServiceDependency
 from app.modules.location.schemas import Origin, Point
