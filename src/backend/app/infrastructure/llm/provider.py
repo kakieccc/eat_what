@@ -10,13 +10,13 @@ from pydantic import Field, ValidationError
 
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.domain.base import Model
-from app.domain.decision.models import Intent
-from app.domain.places.models import Place
-from app.domain.preferences.models import CUISINES, Preferences
-from app.workflows.food_decision.prompts.explain import PROMPT as EXPLAIN
-from app.workflows.food_decision.prompts.parse import PROMPT as PARSE
-from app.workflows.food_decision.prompts.rerank import PROMPT as RERANK
+from app.core.models import Model
+from app.modules.decision.schemas import Intent
+from app.modules.decision.workflow.prompts.explain import PROMPT as EXPLAIN
+from app.modules.decision.workflow.prompts.parse import PROMPT as PARSE
+from app.modules.decision.workflow.prompts.rerank import PROMPT as RERANK
+from app.modules.places.schemas import Place
+from app.modules.preferences.schemas import CUISINES, Preferences
 
 T = TypeVar("T", bound=Model)
 PROMPT_VERSION = "1"

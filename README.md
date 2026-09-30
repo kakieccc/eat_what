@@ -71,18 +71,28 @@ pnpm exec playwright install chromium
 pnpm e2e
 ```
 
-真实集成测试要求独立测试数据库，预先准备与被测版本一致的业务表结构。在本地环境中设置 `TEST_DATABASE_URL`、`TEST_ORIGIN`（含 `latitude`、`longitude`、`address` 的 JSON）、`FOOD_LIVE_TESTS=1` 后执行 `uv run pytest -m live -v`。它会产生真实 API 调用和测试业务记录，不会自动删除数据库。真实前端 E2E 另需 `TEST_ADDRESS`。
+后端 `tests/` 包含规则、SSE、Worker 和模块边界单元测试，以及使用真实 PostgreSQL 的事务、任务执行和 HTTP 集成测试；高德和 LLM 使用测试替身，不发起外部请求。
 
-设置独立 PostgreSQL 的 `TEST_DATABASE_URL`（`postgresql+asyncpg://`）后，常规 `pytest` 会在临时 schema 中验证创建、调整、确认恢复、幂等冲突、租约失效和失败终态，并清理该 schema。未配置时此测试明确 skipped。
+数据库测试只读取显式设置的 `TEST_DATABASE_URL`，要求数据库名称以 `_test` 结尾，并为每个测试创建独立 schema，结束后只删除该 schema。测试账号需要创建 schema 的权限；不读取应用 `.env` 中的数据库连接。未设置该变量时，数据库测试会跳过，跳过不代表通过。
 
-未配置真实测试环境时 live 用例明确 skipped，不代表通过。查看 [验证记录](docs/verification.md) 与 [演示脚本](docs/demo-script.md)。
+```bash
+cd src/backend
+# 指向独立测试数据库；用实际测试账号与端口替换示例值。
+TEST_DATABASE_URL='postgresql+asyncpg://test_user:test_password@127.0.0.1:5432/eat_what_test' uv run pytest -q
+# 仅运行不需要数据库的用例：
+uv run pytest -q -m 'not database'
+```
+
+真实上游联调仍需要有效 Key；真实前端 E2E 另需 `TEST_ADDRESS`。
 
 ## 设计与运维边界
 
-- `app/main.py` 创建应用并挂载路由；`app/api` 负责 HTTP Schema、路由、SSE 帧编码和统一错误处理。
-- `app/application` 按 decision、places、history 等用例组织命令、查询和接口；`app/workflows/food_decision` 存放 LangGraph State、节点、事件和 Prompt；`app/domain` 按 geo、places、preferences、decision 分组放置业务类型和规则。
-- `app/infrastructure` 实现高德、LLM、缓存、PostgreSQL 仓储与 Task Worker。`app/bootstrap.py` 是具体依赖的唯一组装入口。依赖方向为 API → application → workflows/domain，基础设施实现内层接口。
-- `app/application/decision/commands.py` 编排创建、调整、确认恢复和幂等；`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件。跨表写入使用短事务，外部调用期间不持有数据库事务。
+- `app/main.py` 创建应用并注册 ORM、挂载路由；`app/api` 保留公共响应 Schema、路由汇总、健康检查、中间件、SSE 帧编码和统一错误处理。
+- `app/modules` 按 auth、location、places、preferences、history、choice、task、decision 组织业务代码。模块内 `router.py` 处理 HTTP，`schemas.py` 定义 Pydantic 请求、响应与可复用数据结构，`models.py` 定义 ORM 表，`service.py` 编排业务用例，`repository.py` 实现存储，`ports.py` 定义依赖协议。简单模块仅保留需要的文件，location 和 history 不创建自己的 ORM 表。
+- 业务路由通过模块的 `dependencies.py` 注入 service；`app/container.py` 保存进程级共享实例，`app/bootstrap.py` 统一组装并通过 lifespan 管理资源。`app/infrastructure` 保留高德、LLM、密码哈希和共享数据库设施；persistence 中的 `registry.py` 注册所有模块的 ORM 表，供应用与 Alembic 共用。
+- `app/modules/decision/service/` 内的 `commands.py` 编排创建、调整、确认恢复和幂等，`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件；`repository/` 包含存储、事务实现和 mapper；`rules/` 存放筛选、评分和调整规则；`workflow/` 保留 LangGraph State、节点、事件和 Prompt。
+- `app/modules/task/repository.py` 管理任务持久化，`service.py` 中的 Worker 通过回调执行任务；运行类型位于 `types.py`，租约异常位于 `errors.py`。`location/geometry.py` 提供距离计算，供高德适配器复用。
+- service、rules 和 workflow 不直接引用 ORM 或 SQLAlchemy Session。跨模块 ORM 联查保留在持久化实现中，高德适配器保留基础设施缓存读写。choice 的业务判断由 service 承担，检查、选择写入及幂等记录仍在同一事务内完成；跨表写入使用短事务，外部调用期间不持有数据库事务。
 - 业务数据使用 PostgreSQL 表；每个执行请求都有 `Task`、`TaskStep` 和 `TaskEvent`，Task 状态是执行事实来源，结果仍从业务表读取。
 - 幂等记录按用户和操作隔离；Task 使用短事务、租约和 `FOR UPDATE SKIP LOCKED` 防止跨进程重复执行。
 - 推荐总执行预算默认 20 秒，等待用户确认不计时。较慢模型可能需要提高 `DECISION_TIMEOUT_SECONDS`，性能必须以真实调用衡量。

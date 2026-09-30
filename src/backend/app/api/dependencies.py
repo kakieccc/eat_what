@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Annotated, cast
 
 from fastapi import Depends, Header, Request
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.auth.service import AuthContext
-from app.application.container import Container
+from app.container import Container
+from app.core.config import Settings
 from app.core.errors import AppError
 
 
@@ -25,18 +26,13 @@ ContainerDependency = Annotated[Container, Depends(container)]
 IdempotencyDependency = Annotated[str, Depends(idempotency_key)]
 
 
-async def current_user(request: Request, services: ContainerDependency) -> AuthContext:
-    return await services.auth.authenticate(request.cookies.get("food_session"))
+def get_settings(request: Request) -> Settings:
+    return cast(Settings, request.app.state.settings)
 
 
-async def mutation_user(
-    services: ContainerDependency,
-    user: Annotated[AuthContext, Depends(current_user)],
-    csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
-) -> AuthContext:
-    services.auth.verify_csrf(user, csrf_token)
-    return user
+def get_sessions(services: ContainerDependency) -> async_sessionmaker[AsyncSession]:
+    return services.sessions
 
 
-CurrentUserDependency = Annotated[AuthContext, Depends(current_user)]
-MutationUserDependency = Annotated[AuthContext, Depends(mutation_user)]
+SettingsDependency = Annotated[Settings, Depends(get_settings)]
+SessionsDependency = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessions)]

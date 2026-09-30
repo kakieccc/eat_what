@@ -1,6 +1,6 @@
 # 数据库表结构设计
 
-本文依据 `src/backend/app/infrastructure/persistence/models/` 的 SQLAlchemy 模型和 `src/backend/migrations/versions/` 的 Alembic 迁移编写。当前设计包含 15 张业务表，使用 PostgreSQL；`alembic_version` 是 Alembic 的版本记录表，不属于业务表。
+本文依据 `src/backend/app/modules/*/models.py` 的 SQLAlchemy 模型和 `src/backend/migrations/versions/` 的 Alembic 迁移编写。所有表共用 `app/infrastructure/persistence/base.py` 的 ORM 基类，由 `registry.py` 统一注册。当前设计包含 15 张业务表，使用 PostgreSQL；`alembic_version` 是 Alembic 的版本记录表，不属于业务表。
 
 所有业务表都有 `id UUID` 主键，以及 `created_at`、`updated_at TIMESTAMP WITH TIME ZONE` 两个非空时间字段。主键和时间由 SQLAlchemy 在写入时生成或更新；迁移 SQL 没有给这些字段设置数据库端默认值。下文只列各表自己的字段。字段后的 `?` 表示允许 `NULL`；未标 `?` 的字段在迁移中均为 `NOT NULL`。模型中 `default=...` 也是应用端默认值，直接执行 SQL 插入时仍需显式提供必填字段。
 

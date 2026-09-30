@@ -1,31 +1,24 @@
 from __future__ import annotations
 
-import os
 from uuid import UUID, uuid4
 
-from dotenv import dotenv_values
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from app.api.errors.handlers import error_response
+from app.core.config import Settings
 from app.core.errors import AppError
 
 
 # 处理跨域请求
-def _allowed_origins() -> list[str]:
-    configured = os.environ.get(
-        "CORS_ORIGINS",
-        dotenv_values(".env").get("CORS_ORIGINS"),
-    )
-    if not configured:
-        raise ValueError("CORS_ORIGINS is not configured")
-    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+def _allowed_origins(settings: Settings) -> list[str]:
+    return [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
 
 
-def register_middlewares(app: FastAPI) -> None:
-    allowed = _allowed_origins()
+def register_middlewares(app: FastAPI, settings: Settings) -> None:
+    allowed = _allowed_origins(settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed,

@@ -4,52 +4,36 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
 import httpx
 from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.auth.service import AuthService
-from app.application.choice.ports import ChoiceRepository as ChoicePort
-from app.application.decision.commands import DecisionCommandService
-from app.application.decision.queries import DecisionQueryService
-from app.application.decision.runner import DecisionRunner
-from app.application.decision.streaming import DecisionStreamService
-from app.application.history.ports import HistoryRepository as HistoryPort
-from app.application.places.service import PlaceService
-from app.application.preferences.ports import PreferencesRepository as PreferencesPort
+from app.container import Container
 from app.core.config import Settings
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
 from app.infrastructure.auth.passwords import Argon2PasswordHasher
 from app.infrastructure.llm.provider import OpenAICompatibleFoodDecisionLlm
-from app.infrastructure.persistence.repositories.auth import SqlAuthRepository
-from app.infrastructure.persistence.repositories.choice import ChoiceRepository
-from app.infrastructure.persistence.repositories.decision import DecisionRepository
-from app.infrastructure.persistence.repositories.history import HistoryRepository
-from app.infrastructure.persistence.repositories.places import PlacesRepository
-from app.infrastructure.persistence.repositories.preferences import PreferencesRepository
 from app.infrastructure.persistence.session import create_sessions, engine_of
-from app.infrastructure.persistence.task_store import TaskStore, TaskWorker
-
-
-@dataclass
-class Container:
-    auth: AuthService
-    settings: Settings
-    sessions: async_sessionmaker[AsyncSession]
-    amap: AmapGeoPlaceProvider
-    llm: OpenAICompatibleFoodDecisionLlm
-    worker: TaskWorker
-    decision_commands: DecisionCommandService
-    decision_queries: DecisionQueryService
-    decision_streams: DecisionStreamService
-    location: AmapGeoPlaceProvider
-    places: PlaceService
-    preferences: PreferencesPort
-    history: HistoryPort
-    choices: ChoicePort
+from app.modules.auth.repository import SqlAuthRepository
+from app.modules.auth.service import AuthService
+from app.modules.choice.repository import ChoiceRepository
+from app.modules.choice.service import ChoiceService
+from app.modules.decision.repository.repository import DecisionRepository
+from app.modules.decision.service.commands import DecisionCommandService
+from app.modules.decision.service.queries import DecisionQueryService
+from app.modules.decision.service.runner import DecisionRunner
+from app.modules.decision.service.streaming import DecisionStreamService
+from app.modules.history.repository import HistoryRepository
+from app.modules.history.service import HistoryService
+from app.modules.location.service import LocationService
+from app.modules.places.repository import PlacesRepository
+from app.modules.places.service import PlaceService
+from app.modules.preferences.repository import PreferencesRepository
+from app.modules.preferences.service import PreferencesService
+from app.modules.task.repository import TaskStore
+from app.modules.task.service import TaskWorker
 
 
 def build_container(
@@ -90,18 +74,18 @@ def build_container(
         decision_commands=DecisionCommandService(repository),
         decision_queries=queries,
         decision_streams=DecisionStreamService(tasks, queries, auth),
-        location=amap,
+        location=LocationService(amap),
         places=PlaceService(PlacesRepository(sessions), amap),
-        preferences=PreferencesRepository(sessions),
-        history=HistoryRepository(sessions),
-        choices=ChoiceRepository(sessions),
+        preferences=PreferencesService(PreferencesRepository(sessions)),
+        history=HistoryService(HistoryRepository(sessions), queries),
+        choices=ChoiceService(ChoiceRepository(sessions)),
     )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
-    settings = Settings()
+    settings = app.state.settings
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     for name in ["httpx", "httpcore", "openai"]:
         logging.getLogger(name).setLevel(logging.WARNING)

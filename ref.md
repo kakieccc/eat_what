@@ -55,19 +55,19 @@ src/
 │   └── e2e/
 └── backend/
     └── app/
-        ├── api/             # HTTP Router、Schema、错误与 SSE 帧编码
-        ├── application/     # choice、decision、history、location、places、preferences、task
-        ├── workflows/food_decision/  # LangGraph State、节点、Graph、事件与 Prompt
-        ├── domain/          # decision、geo、history、places、preferences
-        ├── infrastructure/  # amap、llm、persistence（含缓存和 Task Worker）
-        ├── core/            # 配置、时钟、错误、ID
+        ├── api/             # 公共路由汇总、Schema、错误、健康检查与 SSE 帧编码
+        ├── modules/         # auth、choice、decision、history、location、places、preferences、task
+        │   └── decision/workflow/  # LangGraph State、节点、Graph、事件与 Prompt
+        ├── infrastructure/  # amap、llm、auth、共享 persistence 设施
+        ├── core/            # 配置、时钟、错误、ID、业务模型基类
+        ├── container.py     # 进程级共享服务引用
         ├── bootstrap.py     # 进程生命周期与具体依赖组装
         └── main.py          # FastAPI 应用入口
 ```
 
-依赖方向为 `api → application → workflows/domain`，`workflows → domain`；`infrastructure` 实现内层 Protocol。`domain` 不导入 HTTP、ORM 或 LangGraph。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
+代码按业务模块组织，模块内部保留路由、业务类型与规则、服务、仓储和 ORM 的职责区分；业务类型与纯规则不导入 HTTP、ORM 或 LangGraph。业务路由通过模块的 `dependencies.py` 注入 service。数据库连接与 ORM 基类共用，`infrastructure/persistence/registry.py` 显式注册全部模块的表。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
 
-每次数据库操作使用独立 `AsyncSession`，并行路线请求不共享 Session。创建、调整、确认恢复、选择地点分别通过 Unit of Work 保证各自跨表原子性。Task 领取、心跳、状态和事件使用短事务；高德与 LLM 调用期间不持有数据库事务。当前 Worker 与 API 运行在同一进程生命周期，后续扩大容量时需评估拆分 Worker 与 API 进程、连接池和上游配额。
+每次数据库操作使用独立 `AsyncSession`，并行路线请求不共享 Session。创建、调整、确认恢复、选择地点通过各自的事务上下文保证跨表原子性。Task 领取、心跳、状态和事件使用短事务；高德与 LLM 调用期间不持有数据库事务。当前 Worker 与 API 运行在同一进程生命周期，后续扩大容量时需评估拆分 Worker 与 API 进程、连接池和上游配额。
 
 ## 4. 当前 `/api/v2` 契约
 
@@ -118,7 +118,7 @@ JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta":
 
 ### 5.1 受控工作流
 
-当前名称是 `workflows/food_decision`：节点和高德调用顺序由代码控制，不是自由规划 ReAct Agent。节点名为：
+当前目录是 `modules/decision/workflow`：节点和高德调用顺序由代码控制，不是自由规划 ReAct Agent。节点名为：
 
 ```text
 [parse_intent →] confirm_intent
@@ -137,13 +137,13 @@ Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、
 
 ### 5.2 领域模型与规则
 
-`domain/geo` 定义 `Point`、`Origin`；`domain/preferences` 定义 `Budget`、`Preferences`；`domain/decision` 定义 `DecisionRequest`、`Intent`、Refinement 和评分/过滤规则；`domain/places` 定义 `Place`、`Route` 及 Provider Protocol。它们当前是 Pydantic 模型，数据库 ORM 与领域对象的转换由持久化映射层处理。`Place` 里照片为 URL 列表，评分、价格、营业状态与路线可为空或未知；候选身份和排序由 `candidateId`、`rank` 表示。
+`modules/location` 定义 `Point`、`Origin`；`modules/preferences` 定义 `Budget`、`Preferences`；`modules/decision` 定义 `DecisionRequest`、`Intent`、Refinement 和评分/过滤规则；`modules/places` 定义 `Place`、`Route` 及 Provider Protocol。业务类型使用 Pydantic 模型；Pydantic 类型在所属模块的 `schemas.py` 中定义，ORM 表在 `models.py` 中定义，类型转换由模块内的 mapper 处理。`Place` 里照片为 URL 列表，评分、价格、营业状态与路线可为空或未知；候选身份和排序由 `candidateId`、`rank` 表示。
 
 当前菜系枚举为：中餐、面馆、火锅、烧烤、快餐、轻食、日韩料理、东南亚料理、西餐、咖啡甜品、小吃、其他餐饮。请求中的菜系必须在这个集合内，例如 `面馆`，不是旧示例中的 `面食`。
 
 确定性代码负责排除已排除地点、超出搜索半径、明确排除的菜系、明确关闭且偏好营业中的地点、已知人均超过预算上限和步行路线超时的地点。人均、评分或营业状态未知时保留未知与警告，不宣称满足条件。路线必须来自高德步行规划，不能把直线距离换算成精确步行时间。当前没有“严格预算”“严格营业状态”的请求开关；若产品需要，应另行设计契约。
 
-评分由 `domain/decision/policies.py` 的七项权重计算：偏好 0.28、步行 0.22、预算 0.18、评分 0.14、营业可信度 0.06、新颖性 0.05、数据完整度 0.07。调整动作改变对应权重或排除集；多样性逻辑尽量避免同品牌、同菜系占满三个位置。LLM 只解析受限偏好、在已有候选中重排并生成可核实理由，不修改 POI 事实或硬约束。`FoodDecisionLlm` 与 `GeoPlaceProvider` 在内层定义 Protocol，分别由 `infrastructure/llm` 和 `infrastructure/amap` 实现。
+评分由 `modules/decision/rules/policies.py` 的七项权重计算：偏好 0.28、步行 0.22、预算 0.18、评分 0.14、营业可信度 0.06、新颖性 0.05、数据完整度 0.07。调整动作改变对应权重或排除集；多样性逻辑尽量避免同品牌、同菜系占满三个位置。LLM 只解析受限偏好、在已有候选中重排并生成可核实理由，不修改 POI 事实或硬约束。`FoodDecisionLlm` 与 `GeoPlaceProvider` 在所属模块定义 Protocol，分别由 `infrastructure/llm` 和 `infrastructure/amap` 实现。
 
 ### 5.3 数据库边界
 
@@ -186,7 +186,7 @@ VITE_AMAP_SECURITY_CODE=replace-with-amap-security-code
 
 浏览器 JS API 与后端 Web 服务 API 需要分别配置对应 Key；前端安全码也必须配置。配置缺失或仍为占位符时，后端校验失败，前端显示配置提示。旧文档中的 `API_V1_PREFIX`、`DATABASE_POOL_SIZE`、`LLM_MAX_RETRIES`、`LANGSMITH_*`、`VITE_ENABLE_EVALUATION_PAGE` 目前都不是应用配置项。
 
-当前可用的静态检查命令在 README 中；但本次 review 之前已清理本地 `.venv`、`node_modules`，执行前需恢复依赖。当前仓库没有后端测试文件；不能把过去规划的创建、调整、确认恢复、幂等冲突、租约失效、失败终态和独立 PostgreSQL 测试表述为已经通过。真实高德/LLM 与 Task 恢复验证还需要有效 Key 和专用测试数据库。
+当前可用的验证命令在 README 中。后端 `tests/` 覆盖规则、SSE、Worker、模块导入及 ORM 注册，并通过隔离 PostgreSQL 验证事务、幂等、确认恢复、租约、鉴权和路由协作。数据库测试必须显式设置 `TEST_DATABASE_URL`，未配置时跳过；高德和 LLM 使用测试替身，测试通过不代表真实上游联调通过。
 
 ## 8. 待决设计与后续工作
 
@@ -198,9 +198,9 @@ VITE_AMAP_SECURITY_CODE=replace-with-amap-security-code
 ## 9. 参考入口
 
 - 后端入口与组装：`src/backend/app/main.py`、`src/backend/app/bootstrap.py`
-- API：`src/backend/app/api/router.py`、`src/backend/app/api/routes/`
-- 用例：`src/backend/app/application/decision/`
-- 工作流：`src/backend/app/workflows/food_decision/`
-- 领域规则：`src/backend/app/domain/decision/policies.py`
+- API：`src/backend/app/api/router.py`、`src/backend/app/modules/*/router.py`
+- 用例：`src/backend/app/modules/decision/service/`
+- 工作流：`src/backend/app/modules/decision/workflow/`
+- 业务规则：`src/backend/app/modules/decision/rules/policies.py`
 - 前端路由与请求：`src/frontend/src/main.tsx`、`src/frontend/src/lib/api.ts`、`src/frontend/src/lib/stream.ts`
 - 运行说明：`README.md`

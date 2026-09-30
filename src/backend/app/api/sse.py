@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 
-from app.workflows.food_decision.events import DecisionEvent
+from app.modules.decision.workflow.events import DecisionEvent
 
 
 def frame(event: DecisionEvent) -> str:

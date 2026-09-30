@@ -19,10 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.clock import now
 from app.core.config import Settings
 from app.core.errors import AppError
-from app.domain.decision.policies import distance
-from app.domain.geo.models import Origin, Point
-from app.domain.places.models import Place, Route
-from app.infrastructure.persistence.models import PlaceCache, RouteCache
+from app.modules.location.geometry import distance
+from app.modules.location.schemas import Origin, Point
+from app.modules.places.models import PlaceCache, RouteCache
+from app.modules.places.schemas import Place, Route
 
 log = logging.getLogger("food.amap")
 

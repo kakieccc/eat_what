@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,21 +21,6 @@ class Settings(BaseSettings):
     task_lease_seconds: int = 60
     task_poll_seconds: float = 1
     auth_session_days: int = Field(default=30, ge=1)
-    auth_cookie_secure: bool = True
-    app_env: str = "production"
-
-    @field_validator("app_env")
-    @classmethod
-    def environment(cls, value: str) -> str:
-        if value not in {"local", "production"}:
-            raise ValueError("APP_ENV must be local or production")
-        return value
-
-    @model_validator(mode="after")
-    def cookie_security(self) -> Settings:
-        if self.app_env == "production" and not self.auth_cookie_secure:
-            raise ValueError("Secure auth cookies are required in production")
-        return self
 
     @field_validator(
         "database_url",
@@ -44,6 +29,7 @@ class Settings(BaseSettings):
         "llm_base_url",
         "llm_model",
     )
+    
     @classmethod
     def required_config(cls, value: str | SecretStr) -> str | SecretStr:
         raw = value.get_secret_value() if isinstance(value, SecretStr) else value
