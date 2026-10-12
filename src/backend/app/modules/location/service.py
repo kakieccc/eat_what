@@ -1,9 +1,9 @@
+from app.modules.location.ports import LocationProvider
 from app.modules.location.schemas import Origin, Point
-from app.modules.places.ports import GeoPlaceProvider
 
 
 class LocationService:
-    def __init__(self, provider: GeoPlaceProvider) -> None:
+    def __init__(self, provider: LocationProvider) -> None:
         self.provider = provider
 
     async def reverse(self, origin: Point) -> Origin:

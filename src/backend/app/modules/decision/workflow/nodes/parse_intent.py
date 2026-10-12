@@ -15,12 +15,12 @@ def build(llm: FoodDecisionLlm) -> Callable[[State], Awaitable[State]]:
         intent = await llm.parse_intent(request.request_text)
         changes: dict[str, JsonValue] = {}
         if (
-            intent.max_walking_minutes is not None
-            and intent.max_walking_minutes != request.max_walking_minutes
+            intent.radius_meters is not None
+            and intent.radius_meters != request.radius_meters
         ):
-            changes["maxWalkingMinutes"] = {
-                "before": request.max_walking_minutes,
-                "after": intent.max_walking_minutes,
+            changes["radiusMeters"] = {
+                "before": request.radius_meters,
+                "after": intent.radius_meters,
             }
         if (
             intent.budget_max is not None

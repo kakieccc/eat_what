@@ -281,6 +281,7 @@ main {
   font-size: 14px;
 }
 .four-options button[aria-pressed="true"],
+.four-options button[data-state="on"],
 .chips button[aria-pressed="true"] {
   background: var(--primary);
   border-color: var(--primary);
@@ -678,7 +679,8 @@ main {
   gap: 12px;
   margin-top: 16px;
 }
-.card-actions > button {
+.card-actions > button,
+.card-actions > a {
   flex: 1;
   min-height: 44px;
 }

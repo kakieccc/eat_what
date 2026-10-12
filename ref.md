@@ -171,6 +171,9 @@ AMAP_ROUTE_CONCURRENCY=3
 AMAP_CACHE_TTL_SECONDS=600
 AMAP_ROUTE_CACHE_TTL_SECONDS=300
 LLM_TIMEOUT_SECONDS=10
+LLM_MAX_RETRIES=1
+LLM_TEMPERATURE=0
+LLM_REASONING_EFFORT=low
 DECISION_TIMEOUT_SECONDS=20
 TASK_LEASE_SECONDS=60
 TASK_POLL_SECONDS=1
@@ -184,7 +187,9 @@ VITE_AMAP_JS_KEY=replace-with-amap-js-key
 VITE_AMAP_SECURITY_CODE=replace-with-amap-security-code
 ```
 
-浏览器 JS API 与后端 Web 服务 API 需要分别配置对应 Key；前端安全码也必须配置。配置缺失或仍为占位符时，后端校验失败，前端显示配置提示。旧文档中的 `API_V1_PREFIX`、`DATABASE_POOL_SIZE`、`LLM_MAX_RETRIES`、`LANGSMITH_*`、`VITE_ENABLE_EVALUATION_PAGE` 目前都不是应用配置项。
+LLM 服务需要支持 Responses API 的 `text.format=json_schema`。`LLM_REASONING_EFFORT` 支持 `none / low / high / max`，默认 `low`；设为 `none` 关闭思考。DeepSeek 在思考模式下忽略 `LLM_TEMPERATURE`。结构化响应仍通过 Pydantic 和业务规则校验；LLM 与高德的异步客户端均由 lifespan 管理和关闭。
+
+浏览器 JS API 与后端 Web 服务 API 需要分别配置对应 Key；前端安全码也必须配置。配置缺失或仍为占位符时，后端校验失败，前端显示配置提示。旧文档中的 `API_V1_PREFIX`、`DATABASE_POOL_SIZE`、`LANGSMITH_*`、`VITE_ENABLE_EVALUATION_PAGE` 目前都不是应用配置项。
 
 当前可用的验证命令在 README 中。后端 `tests/` 覆盖规则、SSE、Worker、模块导入及 ORM 注册，并通过隔离 PostgreSQL 验证事务、幂等、确认恢复、租约、鉴权和路由协作。数据库测试必须显式设置 `TEST_DATABASE_URL`，未配置时跳过；高德和 LLM 使用测试替身，测试通过不代表真实上游联调通过。
 

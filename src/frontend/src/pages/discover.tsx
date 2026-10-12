@@ -5,10 +5,20 @@ import { Check, LoaderCircle, MapPin } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { PlaceCard } from "../components/place-card";
+import { RadiusOptions } from "../components/radius-options";
 import { useDraft } from "../lib/store";
 import { request } from "../lib/api";
 import { stream, subscribe } from "../lib/stream";
-import { runSchema, type DecisionEvent, type Run, type Place } from "../lib/schemas";
+import {
+  decisionRequestSchema, decisionRequestSnapshotSchema, isSearchRadius, runSchema,
+  type DecisionEvent, type Run, type Place, type SearchRadius,
+} from "../lib/schemas";
+import { formatDistance } from "../lib/utils";
+
+function formatChange(field: string, value: unknown): string {
+  if (field === "radiusMeters" && typeof value === "number") return formatDistance(value);
+  return Array.isArray(value) ? value.join("、") || "不限" : String(value ?? "不限");
+}
 export function Discover() {
   const draft = useDraft(),
     client = useQueryClient(),
@@ -21,9 +31,8 @@ export function Discover() {
       { node: string; label: string; done: boolean }[]
     >([]),
     [selected, setSelected] = useState<string | null>(null),
-    [route, setRoute] = useState(false),
     [saving, setSaving] = useState(false),
-    [newMinutes, setNewMinutes] = useState("20"),
+    [newRadius, setNewRadius] = useState<SearchRadius | undefined>(undefined),
     [newBudget, setNewBudget] = useState("60");
   const choiceKeys = useRef(new Map<string, string>());
   const runQuery = useQuery({
@@ -37,6 +46,13 @@ export function Discover() {
     retry: false,
   });
   const run = runQuery.data;
+  const needsRadiusSelection = !!run && !isSearchRadius(run.request.radiusMeters);
+  const editRequest = (snapshot: Run["request"]) => {
+    draft.setPreferences(snapshot);
+    draft.setOrigin(snapshot.origin);
+    draft.setRunId(null);
+    navigate("/");
+  };
   const process = (event: DecisionEvent) => {
     if (event.type === "runStarted") draft.setRunId(event.decisionRunId);
     if (event.type === "nodeStarted")
@@ -63,6 +79,16 @@ export function Discover() {
     body: unknown,
     key: string = crypto.randomUUID(),
   ) => {
+    if (path === "/decision-runs") {
+      const parsed = decisionRequestSchema.safeParse(body);
+      if (!parsed.success) {
+        const snapshot = decisionRequestSnapshotSchema.safeParse(body);
+        if (snapshot.success) editRequest(snapshot.data);
+        else setError("请确认搜索范围、预算和出发位置后重新推荐");
+        return;
+      }
+      body = parsed.data;
+    }
     abort.current?.abort();
     if (path === "/decision-runs") draft.setRunId(null);
     const controller = new AbortController();
@@ -71,7 +97,7 @@ export function Discover() {
     setPolling(false);
     setError("");
     setSteps([]);
-    setRoute(false);
+    setNewRadius(undefined);
     try {
       await stream(path, body, key, controller.signal, process);
     } catch (e) {
@@ -106,7 +132,7 @@ export function Discover() {
     return () => clearTimeout(timer);
   }, [busy, steps]);
   const refine = (action: string, value: unknown = null) => {
-    if (run)
+    if (run && (action === "changeRadius" || !needsRadiusSelection))
       void launch(`/decision-runs/${run.decisionRunId}/refinements`, {
         action,
         value,
@@ -178,6 +204,7 @@ export function Discover() {
         {run?.request.origin.address ||
           draft.origin?.address ||
           "尚未确认出发位置"}
+        {" · 搜索半径 "}{formatDistance(run?.request.radiusMeters ?? draft.preferences.radiusMeters)}
       </p>
       <FoodMap
         origin={run?.request.origin ?? draft.origin}
@@ -189,7 +216,6 @@ export function Discover() {
             .getElementById("place-" + id)
             ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
         }}
-        route={route}
       />
       {steps.length > 0 && (
         <div className="timeline" aria-live="polite">
@@ -237,19 +263,16 @@ export function Discover() {
               <p key={field}>
                 <strong>
                   {{
-                    maxWalkingMinutes: "步行上限（分钟）",
+                    radiusMeters: "搜索半径",
+                    maxWalkingMinutes: "旧版步行上限（分钟）",
                     budgetMax: "预算上限（元）",
                     excludedCuisines: "不想吃的菜系",
                   }[field] ?? "条件"}
                 </strong>
                 <br />
-                {Array.isArray(change.before)
-                  ? change.before.join("、") || "不限"
-                  : String(change.before ?? "不限")}{" "}
+                {formatChange(field, change.before)}{" "}
                 →{" "}
-                {Array.isArray(change.after)
-                  ? change.after.join("、")
-                  : String(change.after)}
+                {formatChange(field, change.after)}
               </p>
             ))}
           </div>
@@ -271,8 +294,14 @@ export function Discover() {
         <div className="empty">
           <h2>这次还没有选好</h2>
           <p>{run.errorCode}</p>
-          <Button onClick={() => launch("/decision-runs", run.request)}>
-            重新推荐
+          {run.errorCode === "UNSUPPORTED_RADIUS" && (
+            <p>请将补充说明中的距离改为 500 米、1 km、2 km 或 5 km。</p>
+          )}
+          <Button onClick={() => {
+            if (needsRadiusSelection || run.errorCode === "UNSUPPORTED_RADIUS") editRequest(run.request);
+            else void launch("/decision-runs", run.request);
+          }}>
+            {needsRadiusSelection || run.errorCode === "UNSUPPORTED_RADIUS" ? "修改搜索范围" : "重新推荐"}
           </Button>
         </div>
       )}
@@ -287,7 +316,7 @@ export function Discover() {
               ["refresh", "换一批"],
             ].map(([action, label]) => (
               <button
-                disabled={working}
+                disabled={working || needsRadiusSelection}
                 key={action}
                 onClick={() => refine(action)}
               >
@@ -295,29 +324,31 @@ export function Discover() {
               </button>
             ))}
           </div>
-          <details className="hard-constraints">
-            <summary>调整预算或步行上限</summary>
-            <label className="field-label">
-              新的步行上限（分钟）
-              <input
-                type="number"
-                min={(run.request.maxWalkingMinutes ?? 15) + 1}
-                max={60}
-                value={newMinutes}
-                onChange={(e) => setNewMinutes(e.target.value)}
+          {needsRadiusSelection && (
+            <p className="warning-text" role="alert">
+              旧记录的搜索半径为 {formatDistance(run.request.radiusMeters)}，请先选择有效范围再调整推荐。
+            </p>
+          )}
+          <details className="hard-constraints" open={needsRadiusSelection || undefined}>
+            <summary>调整预算或搜索范围</summary>
+            <fieldset>
+              <legend>新的搜索半径</legend>
+              <RadiusOptions
+                value={newRadius ?? (isSearchRadius(run.request.radiusMeters) ? run.request.radiusMeters : undefined)}
+                onChange={setNewRadius}
+                disabled={working}
               />
-            </label>
+            </fieldset>
             <Button
               variant="outline"
               disabled={
                 working ||
-                !Number.isInteger(Number(newMinutes)) ||
-                Number(newMinutes) <= (run.request.maxWalkingMinutes ?? 15) ||
-                Number(newMinutes) > 60
+                newRadius === undefined ||
+                newRadius === run.request.radiusMeters
               }
-              onClick={() => refine("increaseWalkingLimit", Number(newMinutes))}
+              onClick={() => refine("changeRadius", newRadius)}
             >
-              确认增加步行上限
+              确认修改搜索范围
             </Button>
             <label className="field-label">
               新的预算上限（元）
@@ -333,6 +364,7 @@ export function Discover() {
               variant="outline"
               disabled={
                 working ||
+                needsRadiusSelection ||
                 newBudget === "" ||
                 !Number.isFinite(Number(newBudget)) ||
                 Number(newBudget) < 0 ||
@@ -354,7 +386,7 @@ export function Discover() {
                   .map(([key, value]) => `${key}: ${value}`)
                   .join(" · ")}
               </p>
-              <Link to="/">调整预算或步行时间</Link>
+              <Link to="/">调整预算或搜索范围</Link>
             </section>
           )}
           <div className="candidates">
@@ -364,13 +396,8 @@ export function Discover() {
                   place={place}
                   selected={selected === place.id}
                   onSelect={() => setSelected(place.id)}
-                  onRoute={() => {
-                    setSelected(place.id);
-                    setRoute(true);
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
                   onChoose={() => choose(place)}
-                  onExclude={() => refine("excludePlace", place.id)}
+                  onExclude={needsRadiusSelection ? undefined : () => refine("excludePlace", place.id)}
                   busy={saving || working}
                 />
               </div>

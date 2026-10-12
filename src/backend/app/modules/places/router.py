@@ -8,6 +8,7 @@ from app.modules.auth.dependencies import CurrentUserDependency
 from app.modules.location.schemas import Origin
 from app.modules.places.dependencies import PlaceServiceDependency
 from app.modules.places.schemas import Place
+from app.modules.preferences.schemas import SEARCH_RADII
 
 router = APIRouter(prefix="/places", tags=["places"])
 
@@ -19,7 +20,9 @@ async def list_places(
     latitude: Annotated[float, Query(ge=-90, le=90)],
     longitude: Annotated[float, Query(ge=-180, le=180)],
     address: Annotated[str, Query(max_length=200)] = "",
-    radius_meters: Annotated[int, Query(alias="radiusMeters", ge=100, le=50000)] = 2000,
+    radius_meters: Annotated[
+        int, Query(alias="radiusMeters", json_schema_extra={"enum": list(SEARCH_RADII)})
+    ] = 2000,
     limit: Annotated[int, Query(ge=1, le=30)] = 20,
     keywords: Annotated[list[str] | None, Query(max_length=5)] = None,
 ) -> Envelope[list[Place]]:

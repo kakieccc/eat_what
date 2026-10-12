@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+SCHEMA_VERSION = 5
+PROMPT_VERSION = "2"
+
 
 class DecisionState(TypedDict, total=False):
     schema_version: int

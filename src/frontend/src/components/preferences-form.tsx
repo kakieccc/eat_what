@@ -1,7 +1,11 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { SlidersHorizontal } from "lucide-react";
-import { preferencesSchema, cuisines, type Preferences } from "../lib/schemas";
+import {
+  preferencesSchema, cuisines, isSearchRadius, type Preferences, type PreferencesSnapshot,
+} from "../lib/schemas";
+import { formatDistance } from "../lib/utils";
+import { RadiusOptions } from "./radius-options";
 import { Button } from "./ui/button";
 import {
   Sheet,
@@ -17,7 +21,7 @@ export function PreferencesForm({
   label,
   busy = false,
 }: {
-  initial: Preferences;
+  initial: PreferencesSnapshot;
   onSubmit: (value: Preferences) => void;
   label: string;
   busy?: boolean;
@@ -30,9 +34,12 @@ export function PreferencesForm({
     formState: { errors },
   } = useForm<Preferences>({
     resolver: zodResolver(preferencesSchema),
-    defaultValues: initial,
+    defaultValues: {
+      ...initial,
+      radiusMeters: isSearchRadius(initial.radiusMeters) ? initial.radiusMeters : undefined,
+    },
   });
-  const minutes = watch("maxWalkingMinutes"),
+  const radius = watch("radiusMeters"),
     chosen = watch("preferredCuisines"),
     excluded = watch("excludedCuisines");
   const toggle = (
@@ -87,22 +94,20 @@ export function PreferencesForm({
           />
         </div>
       </fieldset>
-      <fieldset>
-        <legend>
-          愿意走多远 <span>分钟</span>
-        </legend>
-        <div className="four-options">
-          {[10, 15, 20, 30].map((value) => (
-            <button
-              type="button"
-              key={value}
-              aria-pressed={minutes === value}
-              onClick={() => setValue("maxWalkingMinutes", value)}
-            >
-              {value}
-            </button>
-          ))}
-        </div>
+      <fieldset data-invalid={!!errors.radiusMeters || undefined}>
+        <legend>搜索半径</legend>
+        <RadiusOptions
+          value={radius}
+          onChange={(value) => setValue("radiusMeters", value, { shouldValidate: true, shouldDirty: true })}
+          disabled={busy}
+          invalid={!!errors.radiusMeters}
+        />
+        <p className="muted">以确认位置为中心的直线范围；补充说明中的距离也需使用这四档。</p>
+        {!isSearchRadius(initial.radiusMeters) && !isSearchRadius(radius) && (
+          <p className="warning-text">
+            旧记录的半径为 {formatDistance(initial.radiusMeters)}，请重新选择搜索范围。
+          </p>
+        )}
       </fieldset>
       <fieldset>
         <legend>今天想吃什么</legend>
@@ -167,24 +172,6 @@ export function PreferencesForm({
                 <option value="lateNight">夜宵</option>
               </select>
             </label>
-            <label className="field-label">
-              最大步行时间（1–60 分钟）
-              <input
-                type="number"
-                min={1}
-                max={60}
-                {...register("maxWalkingMinutes", { valueAsNumber: true })}
-              />
-            </label>
-            <label className="field-label">
-              搜索半径（米）
-              <input
-                type="number"
-                min={100}
-                max={50000}
-                {...register("radiusMeters", { valueAsNumber: true })}
-              />
-            </label>
             <fieldset>
               <legend>用餐场景</legend>
               <div className="chips">
@@ -247,7 +234,7 @@ export function PreferencesForm({
       </Sheet>
       {Object.keys(errors).length > 0 && (
         <p className="error" role="alert">
-          请检查预算上下限、步行时间及是否有重复排除的菜系。
+          请检查预算上下限、搜索半径及是否有重复排除的菜系。
         </p>
       )}
       <Button type="submit" disabled={busy} className="primary-full">

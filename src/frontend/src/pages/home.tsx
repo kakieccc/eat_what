@@ -7,13 +7,13 @@ import { Button } from "../components/ui/button";
 import { useDraft } from "../lib/store";
 import { useAuth } from "../lib/auth";
 import { configError, request } from "../lib/api";
-import type { Preferences } from "../lib/schemas";
+import { preferencesSnapshotSchema, type Preferences, type PreferencesSnapshot } from "../lib/schemas";
 export function Home() {
   const draft = useDraft(),
     navigate = useNavigate();
   const saved = useQuery({
     queryKey: ["preferences"],
-    queryFn: () => request<Preferences>("/preferences"),
+    queryFn: () => request<PreferencesSnapshot>("/preferences", undefined, "GET", undefined, undefined, preferencesSnapshotSchema),
     enabled: !draft.hasDraft && !configError,
     retry: false,
   });
@@ -51,7 +51,7 @@ export function Home() {
           label="帮我选一家"
         />
       )}
-      <p className="footnote">真实地点 · 步行到店 · 三个合心意的选择</p>
+      <p className="footnote">真实地点 · 按范围寻找 · 三个合心意的选择</p>
     </>
   );
 }
@@ -60,7 +60,7 @@ export function Profile() {
     navigate = useNavigate();
   const query = useQuery({
     queryKey: ["preferences"],
-    queryFn: () => request<Preferences>("/preferences"),
+    queryFn: () => request<PreferencesSnapshot>("/preferences", undefined, "GET", undefined, undefined, preferencesSnapshotSchema),
     retry: false,
   });
   const client = useQueryClient(),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric
+from sqlalchemy import ForeignKey, Integer, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,4 +20,5 @@ class Preference(IdentityMixin, Base):
     typical_budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     typical_budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     typical_max_walking_minutes: Mapped[int | None]
+    typical_radius_meters: Mapped[int] = mapped_column(Integer, default=2000)
     preferred_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)

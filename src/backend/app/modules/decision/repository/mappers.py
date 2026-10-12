@@ -11,7 +11,6 @@ def request_from_session(row: DiscoverySession) -> DecisionRequest:
             latitude=row.origin_latitude, longitude=row.origin_longitude, address=row.origin_address
         ),
         budget_per_person=Budget(min=row.budget_per_person_min, max=row.budget_per_person_max),
-        max_walking_minutes=row.max_walking_minutes,
         radius_meters=row.radius_meters,
         preferred_cuisines=list(row.preferred_cuisines),
         excluded_cuisines=list(row.excluded_cuisines),
@@ -30,7 +29,6 @@ def session_values(request: DecisionRequest) -> dict[str, object]:
         "origin_address": request.origin.address,
         "budget_per_person_min": request.budget_per_person.min,
         "budget_per_person_max": request.budget_per_person.max,
-        "max_walking_minutes": request.max_walking_minutes,
         "radius_meters": request.radius_meters,
         "preferred_cuisines": request.preferred_cuisines,
         "excluded_cuisines": request.excluded_cuisines,
@@ -45,7 +43,12 @@ def session_values(request: DecisionRequest) -> dict[str, object]:
 
 def request_for_run(run: DecisionRun, discovery: DiscoverySession) -> DecisionRequest:
     if run.effective_preferences:
-        return DecisionRequest.model_validate(run.effective_preferences)
+        snapshot = {
+            key: value
+            for key, value in run.effective_preferences.items()
+            if key not in {"maxWalkingMinutes", "max_walking_minutes"}
+        }
+        return DecisionRequest.model_validate(snapshot)
     return request_from_session(discovery)
 
 

@@ -15,4 +15,4 @@ async def filtering(state: State) -> State:
         state.get("recent", []),
         state.get("old_cuisines", []),
     )
-    return {"places": serialized(ordered[:15]), "filter_summary": summary}
+    return {"places": serialized(ordered[:10]), "filter_summary": summary}

@@ -1,12 +1,12 @@
-import { Footprints, Star, ArrowUpRight } from "lucide-react";
+import { MapPin, Star, ArrowUpRight } from "lucide-react";
 import type { Place } from "../lib/schemas";
+import { cn, formatDistance, navigationHref } from "../lib/utils";
 import { Button } from "./ui/button";
 export function PlaceCard({
   place,
   selected,
   onSelect,
   onChoose,
-  onRoute,
   onExclude,
   busy = false,
 }: {
@@ -14,13 +14,13 @@ export function PlaceCard({
   selected: boolean;
   onSelect: () => void;
   onChoose: () => void;
-  onRoute: () => void;
   onExclude?: () => void;
   busy?: boolean;
 }) {
+  const navigation = navigationHref(place.navigationUrl);
   return (
     <article
-      className={"place-card " + (selected ? "selected" : "")}
+      className={cn("place-card", { selected })}
       onFocus={onSelect}
     >
       <button className="place-title" onClick={onSelect}>
@@ -31,10 +31,8 @@ export function PlaceCard({
       <p className="muted">{place.cuisineTypes.join(" · ")}</p>
       <div className="place-stats">
         <span>
-          <Footprints size={16} />
-          {place.route
-            ? `${Math.max(1, Math.round(place.route.durationSeconds / 60))} 分钟 · ${place.route.distanceMeters} 米`
-            : "路线暂无数据"}
+          <MapPin size={16} />
+          直线 {formatDistance(place.straightLineDistanceMeters)}
         </span>
         <span>
           <Star size={15} />
@@ -67,7 +65,8 @@ export function PlaceCard({
             <span>
               {{
                 preference_match: "口味匹配",
-                walking_cost: "步行成本",
+                distance_cost: "距离便利度",
+                walking_cost: "旧版步行成本",
                 budget_match: "预算匹配",
                 rating_quality: "评分质量",
                 availability_confidence: "营业可信度",
@@ -81,9 +80,11 @@ export function PlaceCard({
         ))}
       </details>
       <div className="card-actions">
-        <Button variant="outline" onClick={onRoute}>
-          看路线
-        </Button>
+        {navigation ? (
+          <Button variant="outline" asChild>
+            <a href={navigation} target="_blank" rel="noopener noreferrer">高德导航</a>
+          </Button>
+        ) : <Button variant="outline" disabled>导航暂无数据</Button>}
         <Button disabled={busy} onClick={onChoose}>
           选这家
         </Button>

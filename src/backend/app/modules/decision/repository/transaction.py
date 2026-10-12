@@ -19,7 +19,7 @@ from app.modules.decision.models import (
 from app.modules.decision.ports import IdempotencySnapshot, ParentSnapshot, ResumeSnapshot
 from app.modules.decision.repository.mappers import request_for_run, session_values
 from app.modules.decision.schemas import DecisionRequest
-from app.modules.decision.workflow.state import State
+from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.task.models import Task, TaskStatus
 
 
@@ -102,7 +102,7 @@ class DecisionTransaction:
         run = DecisionRun(
             discovery_session_id=session_id,
             parent_decision_id=parent_id,
-            workflow_version="4",
+            workflow_version=str(SCHEMA_VERSION),
             effective_preferences=request.model_dump(mode="json"),
             excluded_place_keys=excluded,
             refinement_action=action,

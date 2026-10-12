@@ -103,7 +103,7 @@ class DecisionRepository:
                 chosen_candidate_ids=list(chosen),
                 suggestions=[]
                 if candidates
-                else ["可以调整预算、步行上限或排除菜系后重新选择；系统不会自动放宽条件。"],
+                else ["可以调整预算、搜索范围或排除菜系后重新选择；系统不会自动放宽条件。"],
                 error_code=run.error_code,
             )
 

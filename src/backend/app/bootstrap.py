@@ -7,15 +7,18 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.container import Container
 from app.core.config import Settings
+from app.infrastructure.amap.cache import AmapCache
+from app.infrastructure.amap.client import AmapClient
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
-from app.infrastructure.auth.passwords import Argon2PasswordHasher
 from app.infrastructure.database.session import create_sessions, engine_of
 from app.infrastructure.llm.provider import OpenAICompatibleLlm
+from app.modules.auth.passwords import Argon2PasswordHasher
 from app.modules.auth.repository import SqlAuthRepository
 from app.modules.auth.service import AuthService
 from app.modules.choice.repository import ChoiceRepository
@@ -41,9 +44,22 @@ def build_container(
     settings: Settings,
     sessions: async_sessionmaker[AsyncSession],
     client: httpx.AsyncClient,
+    llm_client: AsyncOpenAI,
 ) -> Container:
-    amap = AmapGeoPlaceProvider(client, sessions, settings)
-    llm = DecisionLlmService(OpenAICompatibleLlm(settings))
+    amap = AmapGeoPlaceProvider(
+        AmapClient(client, settings),
+        AmapCache(
+            sessions,
+            settings.amap_cache_ttl_seconds,
+            settings.amap_route_cache_ttl_seconds,
+            settings.amap_empty_cache_ttl_seconds,
+        ),
+        settings.amap_operation_timeout_seconds,
+    )
+    places = PlaceService(
+        PlacesRepository(sessions), amap, settings.amap_operation_timeout_seconds
+    )
+    llm = DecisionLlmService(OpenAICompatibleLlm(settings, llm_client))
     repository = DecisionRepository(sessions, settings.llm_model)
     auth = AuthService(
         SqlAuthRepository(sessions), Argon2PasswordHasher(), settings.auth_session_days
@@ -55,6 +71,7 @@ def build_container(
         tasks,
         queries,
         amap,
+        places,
         llm,
         settings.task_lease_seconds,
         settings.decision_timeout_seconds,
@@ -76,7 +93,7 @@ def build_container(
         decision_queries=queries,
         decision_streams=DecisionStreamService(tasks, queries, auth),
         location=LocationService(amap),
-        places=PlaceService(PlacesRepository(sessions), amap),
+        places=places,
         preferences=PreferencesService(PreferencesRepository(sessions)),
         history=HistoryService(HistoryRepository(sessions), queries),
         choices=ChoiceService(ChoiceRepository(sessions)),
@@ -95,11 +112,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.ready = False
     app.state.settings = settings
     app.state.sessions = sessions
-    async with httpx.AsyncClient(follow_redirects=False) as client:
+    async with (
+        httpx.AsyncClient(follow_redirects=False) as client,
+        AsyncOpenAI(
+            api_key=settings.llm_api_key.get_secret_value(),
+            base_url=settings.llm_base_url,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        ) as llm_client,
+    ):
         try:
             async with sessions() as db:
                 await db.execute(text("SELECT 1"))
-            app.state.container = build_container(settings, sessions, client)
+            app.state.container = build_container(settings, sessions, client, llm_client)
             app.state.ready = True
             worker = asyncio.create_task(app.state.container.worker.run())
             try:

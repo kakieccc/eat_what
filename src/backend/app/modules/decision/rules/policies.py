@@ -6,7 +6,7 @@ from app.modules.preferences.schemas import Preferences
 
 WEIGHTS = dict(
     preference_match=0.28,
-    walking_cost=0.22,
+    distance_cost=0.22,
     budget_match=0.18,
     rating_quality=0.14,
     availability_confidence=0.06,
@@ -16,7 +16,7 @@ WEIGHTS = dict(
 
 
 def eligible(
-    places: list[Place], pref: Preferences, excluded: list[str], routes: bool = False
+    places: list[Place], pref: Preferences, excluded: list[str]
 ) -> tuple[list[Place], dict[str, int]]:
     kept: list[Place] = []
     counts: Counter[str] = Counter()
@@ -36,10 +36,6 @@ def eligible(
             and p.average_cost > pref.budget_per_person.max
         ):
             reason = "budget"
-        elif routes and (
-            p.route is None or p.route.duration_seconds > pref.max_walking_minutes * 60
-        ):
-            reason = "walkingLimit"
         if reason:
             counts[reason] += 1
         else:
@@ -63,7 +59,7 @@ def score_places(
 ) -> list[Place]:
     weights = WEIGHTS.copy()
     boost = {
-        "closer": "walking_cost",
+        "closer": "distance_cost",
         "cheaper": "budget_match",
         "higherRated": "rating_quality",
     }.get(action)
@@ -88,14 +84,10 @@ def score_places(
             if action == "cheaper":
                 ceiling = float(budget.max or 100)
                 budget_score = max(0, 100 * (1 - float(p.average_cost) / max(ceiling, 1)))
-        walking = (
-            max(0, 100 * (1 - p.route.duration_seconds / (pref.max_walking_minutes * 60)))
-            if p.route
-            else max(0, 100 * (1 - p.straight_line_distance_meters / pref.radius_meters))
-        )
+        distance_score = max(0, 100 * (1 - p.straight_line_distance_meters / pref.radius_meters))
         sub = dict(
             preference_match=float(match),
-            walking_cost=walking,
+            distance_cost=distance_score,
             budget_match=budget_score,
             rating_quality=p.rating * 20 if p.rating is not None else 40,
             availability_confidence={"open": 100, "unknown": 40, "closed": 0}[p.business_status],
@@ -106,10 +98,9 @@ def score_places(
                     p.rating is not None,
                     p.average_cost is not None,
                     p.business_status != "unknown",
-                    p.route is not None,
                 ]
             )
-            / 4,
+            / 3,
         )
         total = round(sum(sub[k] * weights[k] / norm for k in sub), 2)
         result.append(
@@ -119,10 +110,9 @@ def score_places(
         result,
         key=lambda p: (
             -p.score,
-            p.route is None,
             -p.score_breakdown["data_completeness"],
             -(p.rating or 0),
-            p.route.duration_seconds if p.route else 999999,
+            p.straight_line_distance_meters,
             p.id,
         ),
     )

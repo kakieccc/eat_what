@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from importlib import import_module
 from logging.config import fileConfig
 
 from alembic import context
@@ -9,14 +10,22 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import Settings
 from app.infrastructure.database.base import Base
-from app.infrastructure.database.registry import register_models
 
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
 
 config.set_main_option("sqlalchemy.url", Settings().db_url.replace("%", "%%"))
-register_models()
+# Load business and integration tables before Alembic reads the shared metadata.
+for module in (
+    "app.modules.auth.models",
+    "app.modules.decision.models",
+    "app.modules.preferences.models",
+    "app.modules.choice.models",
+    "app.modules.task.models",
+    "app.infrastructure.amap.models",
+):
+    import_module(module)
 target_metadata = Base.metadata
 
 

@@ -10,6 +10,7 @@ from app.core.errors import AppError
 from app.modules.decision.ports import DecisionRepository, FoodDecisionLlm
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.service.queries import DecisionQueryService
+from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.events import (
     ConfirmationRequired,
     DecisionEvent,
@@ -20,8 +21,9 @@ from app.modules.decision.workflow.events import (
     WorkflowError,
 )
 from app.modules.decision.workflow.graph import build_graph
-from app.modules.decision.workflow.state import State
+from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.ports import GeoPlaceProvider
+from app.modules.places.service import PlaceService
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.ports import TaskStore
 from app.modules.task.types import TaskClaim
@@ -36,6 +38,7 @@ class DecisionRunner:
         tasks: TaskStore,
         queries: DecisionQueryService,
         amap: GeoPlaceProvider,
+        places: PlaceService,
         llm: FoodDecisionLlm,
         lease_seconds: int,
         timeout_seconds: float,
@@ -45,7 +48,7 @@ class DecisionRunner:
         self.queries = queries
         self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
-        self.graph = build_graph(amap, llm, self.emit, self.step_started, self.save_state)
+        self.graph = build_graph(amap, places, llm, self.emit, self.step_started, self.save_state)
 
     async def execute_claim(self, claim: TaskClaim) -> None:
         graph_job = asyncio.create_task(self._execute_task(claim))
@@ -80,13 +83,18 @@ class DecisionRunner:
         task_id, run_id, request_id, state, elapsed_ms = await self.repository.prepare(claim)
         if state.get("already_completed"):
             return
-        if state.get("schema_version") != 4:
+        if state.get("schema_version") != SCHEMA_VERSION:
             raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
         DecisionRequest.model_validate(state["request"])
         await self.emit(task_id, RunStarted(request_id=request_id, decision_run_id=run_id))
         remaining = self.timeout_seconds - elapsed_ms / 1000
-        async with asyncio.timeout(max(0.001, remaining)):
-            result = cast(State, await self.graph.ainvoke(state))
+        deadline = asyncio.get_running_loop().time() + max(0.001, remaining)
+        token = execution_deadline.set(deadline)
+        try:
+            async with asyncio.timeout_at(deadline):
+                result = cast(State, await self.graph.ainvoke(state))
+        finally:
+            execution_deadline.reset(token)
         duration = int((time.monotonic() - started) * 1000)
         if result.get("awaiting_confirmation"):
             await self.repository.wait_for_confirmation(claim, result, duration)

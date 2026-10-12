@@ -20,6 +20,11 @@ export const originSchema = z.object({
   address: z.string(),
 });
 export type Origin = z.infer<typeof originSchema>;
+export const radiusValues = [500, 1000, 2000, 5000] as const;
+export type SearchRadius = (typeof radiusValues)[number];
+export function isSearchRadius(value: unknown): value is SearchRadius {
+  return radiusValues.some((radius) => radius === value);
+}
 const money = z
   .string()
   .refine(
@@ -29,7 +34,7 @@ const money = z
     "请输入 0–10000 的金额",
   )
   .nullable();
-export const preferencesSchema = z
+export const preferencesSnapshotSchema = z
   .object({
     budgetPerPerson: z
       .object({ min: money, max: money })
@@ -42,7 +47,6 @@ export const preferencesSchema = z
           Number(b.min) <= Number(b.max),
         "预算下限不能高于上限",
       ),
-    maxWalkingMinutes: z.number().int().min(1).max(60),
     radiusMeters: z.number().int().min(100).max(50000),
     preferredCuisines: z.array(z.string()),
     excludedCuisines: z.array(z.string()),
@@ -56,10 +60,17 @@ export const preferencesSchema = z
     (p) => !p.preferredCuisines.some((c) => p.excludedCuisines.includes(c)),
     "喜欢和排除的菜系不能重叠",
   );
+export type PreferencesSnapshot = z.infer<typeof preferencesSnapshotSchema>;
+export const preferencesSchema = preferencesSnapshotSchema.safeExtend({
+  radiusMeters: z.literal(radiusValues, "请选择 500 米、1 km、2 km 或 5 km"),
+});
 export type Preferences = z.infer<typeof preferencesSchema>;
+export const decisionRequestSnapshotSchema = preferencesSnapshotSchema.safeExtend({
+  origin: originSchema,
+});
+export const decisionRequestSchema = preferencesSchema.safeExtend({ origin: originSchema });
 export const defaults: Preferences = {
   budgetPerPerson: { min: "20", max: "60" },
-  maxWalkingMinutes: 15,
   radiusMeters: 2000,
   preferredCuisines: [],
   excludedCuisines: [],
@@ -121,7 +132,7 @@ export const runSchema = z
       "failed",
     ]),
     places: z.array(placeSchema),
-    request: preferencesSchema.extend({ origin: originSchema }),
+    request: decisionRequestSnapshotSchema,
     confirmation: z.record(z.string(), confirmationChangeSchema).nullable(),
     filterSummary: z.record(z.string(), z.number()),
     suggestions: z.array(z.string()),

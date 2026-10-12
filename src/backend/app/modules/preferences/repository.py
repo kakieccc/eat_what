@@ -23,7 +23,7 @@ class PreferencesRepository:
             "excluded_cuisines": preferences.excluded_cuisines,
             "typical_budget_per_person_min": preferences.budget_per_person.min,
             "typical_budget_per_person_max": preferences.budget_per_person.max,
-            "typical_max_walking_minutes": preferences.max_walking_minutes,
+            "typical_radius_meters": preferences.radius_meters,
             "preferred_tags": preferences.desired_tags,
         }
         async with self.sessions.begin() as session:

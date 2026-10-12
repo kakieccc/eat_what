@@ -7,6 +7,9 @@ from pydantic import Field, model_validator
 
 from app.core.models import Model
 
+SearchRadius = Literal[500, 1000, 2000, 5000]
+SEARCH_RADII: tuple[SearchRadius, ...] = (500, 1000, 2000, 5000)
+
 CUISINES = [
     "中餐",
     "面馆",
@@ -36,7 +39,6 @@ class Budget(Model):
 
 class Preferences(Model):
     budget_per_person: Budget = Field(default_factory=Budget)
-    max_walking_minutes: int = Field(default=15, ge=1, le=60)
     radius_meters: int = Field(default=2000, ge=100, le=50000)
     preferred_cuisines: list[str] = Field(default_factory=list, max_length=12)
     excluded_cuisines: list[str] = Field(default_factory=list, max_length=12)
@@ -55,3 +57,7 @@ class Preferences(Model):
         if any(len(t) > 30 for t in self.desired_tags):
             raise ValueError("场景标签过长")
         return self
+
+
+class PreferencesUpdate(Preferences):
+    radius_meters: SearchRadius = 2000

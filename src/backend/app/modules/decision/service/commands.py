@@ -7,8 +7,9 @@ from app.core.ids import request_hash
 from app.modules.decision.ports import DecisionRepository
 from app.modules.decision.rules.refinement import apply_refinement
 from app.modules.decision.schemas import DecisionRequest, RefinementRequest
-from app.modules.decision.workflow.state import State
+from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.schemas import Place
+from app.modules.preferences.rules import require_supported_radius
 
 
 class DecisionCommandService:
@@ -18,6 +19,7 @@ class DecisionCommandService:
     async def create(
         self, user_id: str, request: DecisionRequest, idempotency_key: str, request_id: str
     ) -> str:
+        require_supported_radius(request.radius_meters)
         return await self._create(user_id, request, idempotency_key, request_id)
 
     async def refine(
@@ -70,9 +72,10 @@ class DecisionCommandService:
                 ]
             else:
                 session_id = await tx.create_discovery(request)
+            require_supported_radius(request.radius_meters)
             run_id = await tx.create_run(session_id, request, parent_id, excluded, action)
             state: State = {
-                "schema_version": 4,
+                "schema_version": SCHEMA_VERSION,
                 "decision_run_id": run_id,
                 "request": request.model_dump(mode="json"),
                 "excluded": excluded,

@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base, IdentityMixin
+from app.modules.decision.workflow.state import PROMPT_VERSION, SCHEMA_VERSION
 
 
 class DiscoverySession(IdentityMixin, Base):
@@ -29,7 +30,8 @@ class DiscoverySession(IdentityMixin, Base):
     origin_address: Mapped[str] = mapped_column(String(200), default="")
     budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    max_walking_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Retained for historical records; new requests use radius_meters.
+    max_walking_minutes: Mapped[int | None] = mapped_column(Integer)
     radius_meters: Mapped[int] = mapped_column(Integer, nullable=False)
     preferred_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
     excluded_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -48,8 +50,8 @@ class DecisionRun(IdentityMixin, Base):
         ForeignKey("discovery_sessions.id"), nullable=False, index=True
     )
     parent_decision_id: Mapped[str | None] = mapped_column(ForeignKey("decision_runs.id"))
-    workflow_version: Mapped[str] = mapped_column(String(32), default="4")
-    prompt_version: Mapped[str] = mapped_column(String(32), default="1")
+    workflow_version: Mapped[str] = mapped_column(String(32), default=str(SCHEMA_VERSION))
+    prompt_version: Mapped[str] = mapped_column(String(32), default=PROMPT_VERSION)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     refinement_action: Mapped[str] = mapped_column(String(64), default="")
     effective_preferences: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)

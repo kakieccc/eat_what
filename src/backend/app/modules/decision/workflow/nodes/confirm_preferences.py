@@ -18,9 +18,9 @@ async def confirm(state: State) -> State:
                 "awaiting_confirmation": True,
             }
         if accepted is True:
-            if intent.max_walking_minutes is not None:
+            if intent.radius_meters is not None:
                 updated = updated.model_copy(
-                    update={"max_walking_minutes": intent.max_walking_minutes}
+                    update={"radius_meters": intent.radius_meters}
                 )
             if intent.budget_max is not None:
                 updated = updated.model_copy(

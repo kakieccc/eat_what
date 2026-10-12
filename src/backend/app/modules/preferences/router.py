@@ -4,7 +4,7 @@ from app.api.errors import error_responses
 from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
 from app.modules.preferences.dependencies import PreferencesServiceDependency
-from app.modules.preferences.schemas import Preferences
+from app.modules.preferences.schemas import Preferences, PreferencesUpdate
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -19,7 +19,7 @@ async def get_preferences(
 
 @router.put("", responses=error_responses(401, 403, 422, 503))
 async def replace_preferences(
-    body: Preferences,
+    body: PreferencesUpdate,
     preferences: PreferencesServiceDependency,
     user: MutationUserDependency,
 ) -> Envelope[Preferences]:

@@ -6,13 +6,14 @@ import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { request } from "../lib/api";
 import { useDraft } from "../lib/store";
-import { defaults, runSchema, type Place, type Preferences, type Run } from "../lib/schemas";
+import { defaults, runSchema, type Place, type PreferencesSnapshot, type Run } from "../lib/schemas";
+import { formatDistance, navigationHref } from "../lib/utils";
 import { useParams, useSearchParams } from "react-router-dom";
 type HistoryData = {
   items: {
     id: string;
     createdAt: string;
-    request: Preferences;
+    request: PreferencesSnapshot;
     choices: {
       id: string;
       feedback: string;
@@ -86,9 +87,7 @@ export function History() {
                     </h2>
                     <p>
                       {choice.place.cuisineTypes.join(" · ")} ·{" "}
-                      {choice.place.route
-                        ? `${Math.max(1, Math.round(choice.place.route.durationSeconds / 60))} 分钟步行`
-                        : "路线暂无数据"}
+                      直线 {formatDistance(choice.place.straightLineDistanceMeters)}
                     </p>
                     {choice.feedback && <p>{choice.feedback}</p>}
                   </Link>
@@ -168,18 +167,7 @@ export function Detail() {
       setBusy(false);
     }
   };
-  const navigation =
-    place?.navigationUrl &&
-    (() => {
-      try {
-        const url = new URL(place.navigationUrl);
-        return url.protocol === "https:" && url.hostname === "uri.amap.com"
-          ? url.href
-          : null;
-      } catch {
-        return null;
-      }
-    })();
+  const navigation = navigationHref(place?.navigationUrl);
   return (
     <>
       <header className="compact-heading">
@@ -207,7 +195,6 @@ export function Detail() {
             origin={run.request.origin}
             places={[place]}
             selected={place.id}
-            route
           />
           <p className="address-summary">
             <MapPin size={16} />
@@ -215,9 +202,7 @@ export function Detail() {
           </p>
           <p className="reason">{place.reason}</p>
           <p>
-            {place.route
-              ? `步行 ${place.route.distanceMeters} 米，约 ${Math.max(1, Math.round(place.route.durationSeconds / 60))} 分钟`
-              : "路线暂无数据，请重试推荐"}
+            距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}，实际道路距离可能更长。
           </p>
           {place.warnings?.map((w) => (
             <p className="warning-text" key={w}>
@@ -240,7 +225,7 @@ export function Detail() {
               </Button>
             </>
           )}
-          {saved && navigation && (
+          {navigation && (
             <a
               className="navigation-button"
               href={navigation}

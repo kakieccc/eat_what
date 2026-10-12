@@ -7,7 +7,7 @@ from pydantic import Field, JsonValue
 from app.core.models import Model
 from app.modules.location.schemas import Origin
 from app.modules.places.schemas import Place
-from app.modules.preferences.schemas import Budget, Preferences
+from app.modules.preferences.schemas import Budget, Preferences, SearchRadius
 
 
 class DecisionRequest(Preferences):
@@ -18,7 +18,7 @@ class Intent(Model):
     preferred_cuisines: list[str] = Field(default_factory=list, max_length=5)
     excluded_cuisines: list[str] = Field(default_factory=list, max_length=5)
     desired_tags: list[str] = Field(default_factory=list, max_length=5)
-    max_walking_minutes: int | None = Field(default=None, ge=1, le=60)
+    radius_meters: int | None = Field(default=None, ge=0)
     budget_max: float | None = Field(default=None, ge=0, le=10000)
 
 
@@ -54,7 +54,7 @@ class DecisionRunResponse(Model):
 
 
 class DecisionCreateRequest(DecisionRequest):
-    pass
+    radius_meters: SearchRadius = 2000
 
 
 class DecisionRunUpdateRequest(Model):
@@ -71,9 +71,9 @@ class ExcludePlaceRefinement(Model):
     value: str = Field(min_length=1, max_length=100)
 
 
-class IncreaseWalkingRefinement(Model):
-    action: Literal["increaseWalkingLimit"]
-    value: int = Field(ge=1, le=60)
+class ChangeRadiusRefinement(Model):
+    action: Literal["changeRadius"]
+    value: SearchRadius
 
 
 class ChangeBudgetRefinement(Model):
@@ -82,6 +82,6 @@ class ChangeBudgetRefinement(Model):
 
 
 RefinementRequest = Annotated[
-    SimpleRefinement | ExcludePlaceRefinement | IncreaseWalkingRefinement | ChangeBudgetRefinement,
+    SimpleRefinement | ExcludePlaceRefinement | ChangeRadiusRefinement | ChangeBudgetRefinement,
     Field(discriminator="action"),
 ]

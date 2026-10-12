@@ -1,13 +1,13 @@
 from app.core.errors import AppError
 from app.modules.decision.schemas import Explanations, Intent, Ranking
 from app.modules.places.schemas import Place
+from app.modules.preferences.rules import require_supported_radius
 from app.modules.preferences.schemas import CUISINES
 
 
 def evidence(place: Place) -> list[str]:
     values = [f"属于{'、'.join(place.cuisine_types)}", f"综合匹配分 {place.score:.0f}/100"]
-    if place.route:
-        values.append(f"步行约 {max(1, round(place.route.duration_seconds / 60))} 分钟")
+    values.append(f"距出发位置直线 {place.straight_line_distance_meters} 米")
     if place.average_cost is not None:
         values.append(f"参考人均 ¥{place.average_cost}")
     if place.rating is not None:
@@ -18,6 +18,8 @@ def evidence(place: Place) -> list[str]:
 
 
 def validate_intent(intent: Intent) -> None:
+    if intent.radius_meters is not None:
+        require_supported_radius(intent.radius_meters)
     if any(c not in CUISINES for c in intent.preferred_cuisines + intent.excluded_cuisines):
         raise AppError("LLM_INVALID_OUTPUT", "模型返回不支持的菜系", 502)
 
