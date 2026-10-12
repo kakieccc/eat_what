@@ -232,7 +232,7 @@ export function Detail() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              打开高德导航
+              在高德查看
               <ArrowUpRight size={18} />
             </a>
           )}

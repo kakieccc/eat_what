@@ -7,12 +7,11 @@ from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.nodes.common import places, serialized
 from app.modules.decision.workflow.state import State
-from app.modules.places.ports import GeoPlaceProvider
 from app.modules.places.service import PlaceService
 
 
 def build(
-    amap: GeoPlaceProvider, place_service: PlaceService, llm: FoodDecisionLlm
+    place_service: PlaceService, llm: FoodDecisionLlm
 ) -> Callable[[State], Awaitable[State]]:
     async def explain(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
@@ -31,9 +30,7 @@ def build(
         return {
             "places": serialized(
                 [
-                    place.model_copy(
-                        update={"navigation_url": amap.navigation(request.origin, place)}
-                    )
+                    place_service.with_navigation(place)
                     for place in explained
                 ]
             )

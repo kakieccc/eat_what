@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.modules.location.schemas import Origin, Point
-from app.modules.places.schemas import Place, Route
+from app.modules.location.schemas import Point
+from app.modules.places.schemas import Place
 
 
 class PlaceRepository(Protocol):
@@ -23,7 +23,4 @@ class GeoPlaceProvider(Protocol):
     async def detail(
         self, external_id: str, origin: Point, *, deadline: float | None = None
     ) -> Place: ...
-    async def walking(
-        self, origin: Point, destination: Point, *, deadline: float | None = None
-    ) -> Route | None: ...
-    def navigation(self, origin: Origin, place: Place) -> str: ...
+    def navigation(self, place: Place) -> str: ...

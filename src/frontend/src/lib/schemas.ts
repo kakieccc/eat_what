@@ -80,14 +80,6 @@ export const defaults: Preferences = {
   openNowPreferred: true,
   requestText: "",
 };
-const routeSchema = z.object({
-  mode: z.literal("walking"),
-  source: z.literal("amap"),
-  distanceMeters: z.number().nonnegative(),
-  durationSeconds: z.number().nonnegative(),
-  polyline: z.array(originSchema.omit({ address: true })),
-});
-export type Route = z.infer<typeof routeSchema>;
 export const placeSchema = z.object({
   id: z.string(),
   externalId: z.string(),
@@ -105,7 +97,6 @@ export const placeSchema = z.object({
   openingHoursText: z.string().nullable(),
   phone: z.string().nullable(),
   photos: z.array(z.string()),
-  route: routeSchema.nullable(),
   dataUpdatedAt: z.string(),
   score: z.number(),
   scoreBreakdown: z.record(z.string(), z.number()),

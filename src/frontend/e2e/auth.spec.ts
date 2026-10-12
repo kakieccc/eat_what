@@ -19,16 +19,16 @@ test("guest registration returns to the requested page and logout clears the she
   let logoutAttempts = 0;
   let registerAttempts = 0;
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.route("**/api/v2/auth/me", (route) => reply(route, unauthorized, 401));
-  await page.route("**/api/v2/auth/register", (route) => {
+  await page.route("**/auth/me", (route) => reply(route, unauthorized, 401));
+  await page.route("**/auth/register", (route) => {
     registerAttempts += 1;
     return reply(route, signed("alice"), 201);
   });
-  await page.route("**/api/v2/discovery-sessions", (route) => reply(route, {
+  await page.route("**/discovery-sessions", (route) => reply(route, {
     success: true, data: { items: [], nextCursor: null },
   }));
-  await page.route("**/api/v2/preferences", (route) => reply(route, { success: true, data: defaults }));
-  await page.route("**/api/v2/auth/logout", (route) => {
+  await page.route("**/preferences", (route) => reply(route, { success: true, data: defaults }));
+  await page.route("**/auth/logout", (route) => {
     logoutAttempts += 1;
     return logoutAttempts === 1
       ? reply(route, { success: false, error: { code: "DEPENDENCY_UNAVAILABLE", message: "暂时无法退出" } }, 503)
@@ -56,7 +56,7 @@ test("guest registration returns to the requested page and logout clears the she
   await page.getByRole("button", { name: "注册并登录" }).click();
   expect(await page.getByLabel("密码").evaluate((input: HTMLInputElement) => input.validity.tooShort)).toBe(true);
   await page.getByLabel("密码").fill("secret88");
-  const registering = page.waitForRequest("**/api/v2/auth/register");
+  const registering = page.waitForRequest("**/auth/register");
   await page.getByRole("button", { name: "注册并登录" }).click();
   const request = await registering;
   expect(request.headers()["x-auth-intent"]).toBe("web");
@@ -67,7 +67,7 @@ test("guest registration returns to the requested page and logout clears the she
 
   await page.getByRole("link", { name: "偏好" }).click();
   await expect(page.getByRole("region", { name: "当前账号" })).toContainText("小艾");
-  const failedSignOut = page.waitForRequest("**/api/v2/auth/logout");
+  const failedSignOut = page.waitForRequest("**/auth/logout");
   await page.getByRole("button", { name: "退出登录" }).click();
   expect((await failedSignOut).headers()["x-csrf-token"]).toBe("csrf-alice");
   await expect(page.getByRole("alert")).toContainText("暂时无法退出");
@@ -80,18 +80,18 @@ test("guest registration returns to the requested page and logout clears the she
 
 test("failed login stays on the form and another account gets its own preferences", async ({ page }) => {
   let active = "";
-  await page.route("**/api/v2/auth/me", (route) => reply(route, unauthorized, 401));
-  await page.route("**/api/v2/auth/login", (route) => {
+  await page.route("**/auth/me", (route) => reply(route, unauthorized, 401));
+  await page.route("**/auth/login", (route) => {
     const body = route.request().postDataJSON() as { username: string; password: string };
     if (body.password === "wrong-password")
       return reply(route, { success: false, error: { code: "INVALID_CREDENTIALS", message: "用户名或密码错误" } }, 401);
     active = body.username;
     return reply(route, signed(active));
   });
-  await page.route("**/api/v2/auth/logout", (route) => reply(route, {
+  await page.route("**/auth/logout", (route) => reply(route, {
     success: true, data: { loggedOut: true },
   }));
-  await page.route("**/api/v2/preferences", (route) => reply(route, {
+  await page.route("**/preferences", (route) => reply(route, {
     success: true, data: { ...defaults, requestText: active === "alice" ? "爱吃面" : "想吃米饭" },
   }));
 
@@ -115,13 +115,13 @@ test("failed login stays on the form and another account gets its own preference
 
 test("session check can be retried and an expired session returns to login", async ({ page }) => {
   let checks = 0;
-  await page.route("**/api/v2/auth/me", (route) => {
+  await page.route("**/auth/me", (route) => {
     checks += 1;
     return checks === 1
       ? reply(route, { success: false, error: { code: "DEPENDENCY_UNAVAILABLE", message: "服务不可用" } }, 503)
       : reply(route, signed("alice"));
   });
-  await page.route("**/api/v2/preferences", (route) => reply(route, unauthorized, 401));
+  await page.route("**/preferences", (route) => reply(route, unauthorized, 401));
   await page.goto("/");
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole("heading", { name: "欢迎回来" })).toBeVisible();

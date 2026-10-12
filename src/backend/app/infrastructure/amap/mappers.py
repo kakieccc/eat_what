@@ -1,4 +1,3 @@
-import math
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -9,12 +8,11 @@ from app.infrastructure.amap.schemas import (
     PlaceResponse,
     RawPlace,
     ReverseResponse,
-    RouteResponse,
     TipsResponse,
 )
 from app.modules.location.geometry import distance
 from app.modules.location.schemas import Origin, Point
-from app.modules.places.schemas import Place, Route
+from app.modules.places.schemas import Place
 
 
 def coordinates(value: Point) -> str:
@@ -64,25 +62,6 @@ def places(response: PlaceResponse, origin: Point, fetched_at: datetime) -> list
     return [place(raw, origin, fetched_at) for raw in response.pois]
 
 
-def walking(response: RouteResponse) -> Route | None:
-    paths = response.route.paths
-    if not paths:
-        return None
-    best = min(paths, key=lambda p: p.duration)
-    polyline = [point(pair) for step in best.steps for pair in step.polyline.split(";") if pair]
-    if not polyline:
-        raise ValueError("Missing geometry")
-    stride = max(1, math.ceil(len(polyline) / 1999))
-    sampled = polyline[::stride]
-    if sampled[-1] != polyline[-1]:
-        sampled.append(polyline[-1])
-    return Route(
-        distance_meters=best.distance,
-        duration_seconds=best.duration,
-        polyline=sampled,
-    )
-
-
 def reverse(response: ReverseResponse, origin: Point) -> Origin:
     return Origin(**origin.model_dump(), address=response.regeocode.formatted_address)
 
@@ -102,12 +81,11 @@ def tips(response: TipsResponse) -> list[Origin]:
     return result[:10]
 
 
-def navigation(origin: Origin, place: Place) -> str:
-    return "https://uri.amap.com/navigation?" + urlencode(
+def navigation(place: Place) -> str:
+    return "https://uri.amap.com/marker?" + urlencode(
         {
-            "from": f"{coordinates(origin)},{origin.address}",
-            "to": f"{coordinates(place.location)},{place.name}",
-            "mode": "walk",
+            "position": coordinates(place.location),
+            "name": place.name,
             "coordinate": "gaode",
             "src": "today-food",
             "callnative": "1",

@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 const port = Number(process.env.E2E_PORT ?? "5173");
 const mockedServiceEnv: Record<string, string> | undefined = process.env.FOOD_LIVE_TESTS === "1" ? undefined : {
-  VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v2",
+  VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? "http://localhost:8000",
   VITE_AMAP_JS_KEY: process.env.VITE_AMAP_JS_KEY ?? "playwright-test-key",
   VITE_AMAP_SECURITY_CODE: process.env.VITE_AMAP_SECURITY_CODE ?? "playwright-test-code",
 };

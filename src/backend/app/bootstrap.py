@@ -51,7 +51,6 @@ def build_container(
         AmapCache(
             sessions,
             settings.amap_cache_ttl_seconds,
-            settings.amap_route_cache_ttl_seconds,
             settings.amap_empty_cache_ttl_seconds,
         ),
         settings.amap_operation_timeout_seconds,
@@ -65,12 +64,11 @@ def build_container(
         SqlAuthRepository(sessions), Argon2PasswordHasher(), settings.auth_session_days
     )
     tasks = TaskStore(sessions)
-    queries = DecisionQueryService(repository)
+    queries = DecisionQueryService(repository, places)
     runner = DecisionRunner(
         repository,
         tasks,
         queries,
-        amap,
         places,
         llm,
         settings.task_lease_seconds,
@@ -95,7 +93,7 @@ def build_container(
         location=LocationService(amap),
         places=places,
         preferences=PreferencesService(PreferencesRepository(sessions)),
-        history=HistoryService(HistoryRepository(sessions), queries),
+        history=HistoryService(HistoryRepository(sessions), queries, places),
         choices=ChoiceService(ChoiceRepository(sessions)),
     )
 

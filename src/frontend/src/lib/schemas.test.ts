@@ -27,13 +27,13 @@ it("accepts direct confirmation changes and rejects a missing contract field", (
       origin: { latitude: 31.2, longitude: 121.5, address: "上海" },
     },
     places: [],
-    confirmation: { maxWalkingMinutes: { before: 15, after: 25 } },
+    confirmation: { radiusMeters: { before: 500, after: 1000 } },
     filterSummary: {},
     suggestions: [],
     errorCode: null,
     chosenCandidateIds: [],
   };
-  expect(runSchema.parse(run).confirmation?.maxWalkingMinutes.after).toBe(25);
+  expect(runSchema.parse(run).confirmation?.radiusMeters.after).toBe(1000);
   expect(runSchema.safeParse({ ...run, confirmation: { changes: run.confirmation } }).success).toBe(false);
   expect(runSchema.safeParse({ ...run, places: undefined }).success).toBe(false);
 });

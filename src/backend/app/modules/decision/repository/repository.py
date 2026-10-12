@@ -99,7 +99,11 @@ class DecisionRepository:
                 confirmation=TypeAdapter(dict[str, ConfirmationChange]).validate_python(
                     confirmation.changes
                 ) if confirmation else None,
-                filter_summary=dict(run.filter_summary),
+                filter_summary={
+                    key: count
+                    for key, count in run.filter_summary.items()
+                    if key in {"excludedPlace", "radius", "cuisine", "closed", "budget"}
+                },
                 chosen_candidate_ids=list(chosen),
                 suggestions=[]
                 if candidates
@@ -238,7 +242,6 @@ class DecisionRepository:
                 place = Place.model_validate(raw).model_copy(
                     update={"candidate_id": uid(), "rank": rank}
                 )
-                route = place.route.model_dump(mode="json") if place.route else None
                 session.add(
                     PlaceCandidate(
                         id=place.candidate_id,
@@ -253,12 +256,6 @@ class DecisionRepository:
                         latitude=place.location.latitude,
                         longitude=place.location.longitude,
                         straight_line_distance_meters=place.straight_line_distance_meters,
-                        walking_distance_meters=place.route.distance_meters
-                        if place.route
-                        else None,
-                        walking_duration_seconds=place.route.duration_seconds
-                        if place.route
-                        else None,
                         rating=place.rating,
                         average_cost=place.average_cost,
                         business_status=place.business_status,
@@ -271,7 +268,6 @@ class DecisionRepository:
                         reason=place.reason,
                         warnings=place.warnings,
                         navigation_url=place.navigation_url,
-                        route_snapshot=route,
                         place_snapshot=place.model_dump(mode="json"),
                     )
                 )

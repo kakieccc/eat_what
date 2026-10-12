@@ -264,7 +264,6 @@ export function Discover() {
                 <strong>
                   {{
                     radiusMeters: "搜索半径",
-                    maxWalkingMinutes: "旧版步行上限（分钟）",
                     budgetMax: "预算上限（元）",
                     excludedCuisines: "不想吃的菜系",
                   }[field] ?? "条件"}

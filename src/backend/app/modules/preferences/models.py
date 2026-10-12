@@ -19,6 +19,5 @@ class Preference(IdentityMixin, Base):
     disliked_places: Mapped[list[str]] = mapped_column(JSONB, default=list)
     typical_budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     typical_budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    typical_max_walking_minutes: Mapped[int | None]
     typical_radius_meters: Mapped[int] = mapped_column(Integer, default=2000)
     preferred_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)

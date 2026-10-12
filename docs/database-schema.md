@@ -1,6 +1,6 @@
 # 数据库表结构设计
 
-本文依据 `src/backend/app/modules/*/models.py`、`src/backend/app/infrastructure/amap/models.py` 的 SQLAlchemy 模型和 `src/backend/migrations/versions/` 的 Alembic 迁移编写。所有表共用 `app/infrastructure/database/base.py` 的 ORM 基类，Alembic 在 `migrations/env.py` 中统一加载业务与缓存模型。当前设计包含 15 张应用表，使用 PostgreSQL；`alembic_version` 是 Alembic 的版本记录表，不属于应用表。
+本文依据 `src/backend/app/modules/*/models.py`、`src/backend/app/infrastructure/amap/models.py` 的 SQLAlchemy 模型和 `src/backend/migrations/versions/` 的 Alembic 迁移编写。所有表共用 `app/infrastructure/database/base.py` 的 ORM 基类，Alembic 在 `migrations/env.py` 中统一加载业务与缓存模型。当前设计包含 14 张应用表，使用 PostgreSQL；`alembic_version` 是 Alembic 的版本记录表，不属于应用表。
 
 所有业务表都有 `id UUID` 主键，以及 `created_at`、`updated_at TIMESTAMP WITH TIME ZONE` 两个非空时间字段。主键和时间由 SQLAlchemy 在写入时生成或更新；迁移 SQL 没有给这些字段设置数据库端默认值。下文只列各表自己的字段。字段后的 `?` 表示允许 `NULL`；未标 `?` 的字段在迁移中均为 `NOT NULL`。模型中 `default=...` 也是应用端默认值，直接执行 SQL 插入时仍需显式提供必填字段。
 
@@ -25,7 +25,7 @@ erDiagram
     place_candidates ||--o{ place_choices : selected
 ```
 
-`place_cache`、`route_cache` 和 `auth_rate_limits` 没有外键。业务记录通过 `user_id` 或 `discovery_session_id → user_id` 归属用户；数据库外键保证记录存在，但跨表的“属于同一用户”校验仍由应用逻辑负责。
+`place_cache` 和 `auth_rate_limits` 没有外键。业务记录通过 `user_id` 或 `discovery_session_id → user_id` 归属用户；数据库外键保证记录存在，但跨表的“属于同一用户”校验仍由应用逻辑负责。
 
 ## 账号与认证
 
@@ -76,7 +76,6 @@ erDiagram
 | `preferred_cuisines`, `excluded_cuisines` | `JSONB` | 喜欢与排除的菜系列表；模型默认空列表。 |
 | `disliked_places` | `JSONB` | 不喜欢的地点列表；模型默认空列表。 |
 | `typical_budget_per_person_min?`, `typical_budget_per_person_max?` | `NUMERIC(10, 2)` | 常用人均预算区间。 |
-| `typical_max_walking_minutes?` | `INTEGER` | 历史步行时长条件；保留旧值，新版本不再读写。 |
 | `typical_radius_meters` | `INTEGER` | 常用直线搜索半径，模型默认 `2000`；新写入仅允许 `500 / 1000 / 2000 / 5000`。 |
 | `preferred_tags` | `JSONB` | 常用标签列表；模型默认空列表。 |
 
@@ -94,7 +93,6 @@ erDiagram
 | `origin_latitude`, `origin_longitude` | `FLOAT` | 用户确认的出发点坐标。 |
 | `origin_address` | `VARCHAR(200)` | 出发点文字地址；模型默认空字符串。 |
 | `budget_per_person_min?`, `budget_per_person_max?` | `NUMERIC(10, 2)` | 本次人均预算区间。 |
-| `max_walking_minutes?` | `INTEGER` | 历史步行时长条件；新会话不填写，保留旧值。 |
 | `radius_meters` | `INTEGER` | 本次直线搜索半径；新请求仅允许 500、1000、2000、5000 米，默认 2000 米，历史其他半径仍可读取。 |
 | `preferred_cuisines`, `excluded_cuisines`, `desired_tags` | `JSONB` | 本次菜系及标签条件；模型默认空列表。 |
 | `meal_period` | `VARCHAR(32)` | 用餐时段。 |
@@ -113,7 +111,7 @@ erDiagram
 | --- | --- | --- |
 | `discovery_session_id` | `UUID` | 外键 → `discovery_sessions.id`，所属选餐会话。 |
 | `parent_decision_id?` | `UUID` | 自引用外键 → `decision_runs.id`，上一版决策。 |
-| `workflow_version`, `prompt_version` | `VARCHAR(32)` | 生成结果时使用的工作流和提示词版本；模型分别默认 `5`、`2`。 |
+| `workflow_version`, `prompt_version` | `VARCHAR(32)` | 生成结果时使用的工作流和提示词版本；模型分别默认 `6`、`3`。 |
 | `status` | `VARCHAR(32)` | 决策状态；模型默认 `pending`。 |
 | `refinement_action` | `VARCHAR(64)` | 产生本次调整的动作；初次决策默认为空字符串。 |
 | `effective_preferences` | `JSONB` | 实际参与本次计算的偏好快照。 |
@@ -154,7 +152,6 @@ erDiagram
 | `address` | `VARCHAR(250)` | 餐厅地址；模型默认空字符串。 |
 | `latitude`, `longitude` | `FLOAT` | 餐厅坐标。 |
 | `straight_line_distance_meters` | `INTEGER` | 与出发点的直线距离。 |
-| `walking_distance_meters?`, `walking_duration_seconds?` | `INTEGER` | 保留历史步行路线距离与耗时；新推荐不查询路线，这两列为空。 |
 | `rating?` | `FLOAT` | 评分。 |
 | `average_cost?` | `NUMERIC(10, 2)` | 人均消费。 |
 | `business_status` | `VARCHAR(16)` | 营业状态；模型默认 `unknown`。 |
@@ -165,8 +162,8 @@ erDiagram
 | `rank` | `INTEGER` | 本次决策中的排序名次。 |
 | `reason` | `VARCHAR(600)` | 推荐理由；模型默认空字符串。 |
 | `warnings` | `JSONB` | 未知或不满足的信息提示；模型默认空列表。 |
-| `navigation_url?` | `VARCHAR(1000)` | 打开导航的链接。 |
-| `route_snapshot?`, `place_snapshot` | `JSONB` | 路线和地点数据快照；地点快照模型默认空对象。 |
+| `navigation_url?` | `VARCHAR(1000)` | 在高德查看目标地点的链接；响应按当前目标地点重新生成。 |
+| `place_snapshot` | `JSONB` | 地点数据快照；模型默认空对象。 |
 
 约束与索引：`UNIQUE (decision_run_id, rank)`、`UNIQUE (decision_run_id, place_key)`；`decision_run_id` 单列索引和 `(decision_run_id, score)` 复合索引。地点键只在同一次决策内唯一。
 
@@ -254,7 +251,7 @@ erDiagram
 
 ## 外部服务缓存
 
-两张缓存表的 ORM 定义位于 `app/infrastructure/amap/models.py`；从业务模块移动至此未改变表名、字段或索引，不需要新增 DDL 迁移。缓存键包含接口、参数和 `v3` 版本，旧版本记录自然过期。`payload` 使用 `{payload, fetched_at}` 封装，高德响应中不插入采集时间；只写入经过校验和转换的成功结果。常规地点缓存默认 600 秒，路线 300 秒，空结果 30 秒。损坏内容视为未命中，数据库故障继续抛出。
+地点缓存的 ORM 定义位于 `app/infrastructure/amap/models.py`，覆盖周边检索、地点详情、逆地理编码和输入提示四种操作。缓存键由接口路径和参数生成。`payload` 使用 `{payload, fetched_at}` 封装，高德响应中不插入采集时间；只写入经过校验和转换的成功结果。正常结果默认缓存 600 秒，空结果 30 秒。损坏内容视为未命中，数据库故障继续抛出。
 
 ### `place_cache`
 
@@ -269,23 +266,10 @@ erDiagram
 
 约束与索引：`UNIQUE (cache_key)`；`expires_at` 有索引。过期数据不会由数据库自动删除。
 
-### `route_cache`
-
-缓存从出发点到目的地的路线结果，缓存键之外保留路线维度，便于排查和管理。
-
-| 字段 | 类型 | 设计用途 |
-| --- | --- | --- |
-| `cache_key` | `VARCHAR(128)` | 路线缓存键；全局唯一。 |
-| `origin_geohash` | `VARCHAR(32)` | 出发点的地理位置编码；模型默认空字符串。 |
-| `destination_place_id` | `VARCHAR(128)` | 目的地的服务商地点 ID；模型默认空字符串。 |
-| `travel_mode` | `VARCHAR(32)` | 出行方式；模型默认 `walking`。 |
-| `payload` | `JSONB` | 缓存封装：路线响应 `payload` 和采集时间 `fetched_at`。 |
-| `expires_at` | `TIMESTAMP WITH TIME ZONE` | 缓存失效时间。 |
-
-约束与索引：`UNIQUE (cache_key)`；`expires_at` 有索引。过期数据不会由数据库自动删除。
-
 ## 迁移与当前状态
 
-首次迁移版本为 `0001_user_accounts`，`down_revision = None`；`0002_timezone_aware_timestamps` 将三个原本不带时区的时间列改为带时区类型；`0003_simplify_workflow_state` 删除未使用的 Task 结果引用和步骤全量快照，并将升级前未完成任务标记为 `WORKFLOW_UPGRADED`。迁移不会由后端启动自动执行；在 `src/backend` 执行 `uv run alembic upgrade head` 会将 `DATABASE_URL` 指向的数据库更新至当前版本。执行前应确认目标连接配置。将迁移回退到 `base` 会删除全部 15 张业务表及其数据。
+首次迁移版本为 `0001_user_accounts`；`0002_timezone_aware_timestamps` 修正三个时间列的时区；`0003_simplify_workflow_state` 简化 Task 快照；`0004_radius_recommendations` 新增常用半径，将已有偏好填充为 `2000` 并升级推荐约束。
 
-`0004_radius_recommendations` 新增常用半径并将已有偏好填充为 `2000`，允许历史会话的分钟字段为空，同时终止旧版本未完成任务及其待确认状态；已完成结果、旧分钟值和 JSON 快照保留。上线顺序为停止后端与 Worker、执行迁移、启动工作流 v5。读取旧快照时忽略分钟字段，不修改原始 JSON；旧半径不在四档内时，必须重新选择才可提交新推荐。降级不会恢复已终止任务；为恢复旧表的非空约束，降级会将 v5 创建会话的空分钟字段填为旧默认值 `15`，不会从半径换算分钟。
+`0005_radius_only` 删除专用路线缓存表、历史时长条件和候选路线字段，将旧未完成任务及其确认状态标记为已升级。当前工作流版本为 `6`、提示词版本为 `3`。已完成记录与原始 JSON 快照保留，读取时仅接受当前 schema 字段，忽略已移除的数据；地点链接根据当前坐标重新生成。旧半径不在四档内时，必须重新选择才可提交新推荐。
+
+上线顺序为停止后端与 Worker、执行迁移、启动新版本。迁移不会由后端启动自动执行；在 `src/backend` 执行 `.venv/bin/alembic upgrade head` 会更新 `DATABASE_URL` 指向的数据库。降级只能恢复已删除的表和列结构，不恢复已删除的数据，也不会恢复已终止任务。回退至 `base` 会删除全部应用表及其数据。

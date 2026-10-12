@@ -44,24 +44,6 @@ class PlaceResponse(RawResponse):
     pois: list[RawPlace]
 
 
-class RawStep(Raw):
-    polyline: str
-
-
-class RawPath(Raw):
-    distance: int = Field(ge=0)
-    duration: int = Field(ge=0)
-    steps: list[RawStep]
-
-
-class RawRoute(Raw):
-    paths: list[RawPath]
-
-
-class RouteResponse(RawResponse):
-    route: RawRoute
-
-
 class RawRegeocode(Raw):
     formatted_address: str
 

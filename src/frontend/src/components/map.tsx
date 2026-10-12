@@ -6,7 +6,6 @@ interface Props {
   origin: Origin | null;
   places?: Place[];
   selected?: string | null;
-  route?: boolean;
   onSelect?: (id: string) => void;
   onPick?: (point: Omit<Origin, "address">) => void;
 }
@@ -15,7 +14,6 @@ export function FoodMap({
   origin,
   places = empty,
   selected,
-  route = false,
   onSelect,
   onPick,
 }: Props) {
@@ -80,18 +78,9 @@ export function FoodMap({
           objects.push(marker);
         }
         const chosen = places.find((p) => p.id === selected);
-        if (chosen && route && chosen.route)
-          objects.push(
-            new amap.Polyline({
-              path: chosen.route.polyline.map((p) => [p.longitude, p.latitude]),
-              strokeColor: "#bf5437",
-              strokeWeight: 6,
-              showDir: true,
-            }),
-          );
         map.add(objects);
         if (places.length) map.setFitView();
-        if (chosen && !route)
+        if (chosen)
           map.setCenter([chosen.location.longitude, chosen.location.latitude]);
       })
       .catch(() => setError("地图加载失败"));
@@ -100,7 +89,7 @@ export function FoodMap({
       if (objects.length) map.remove(objects);
       objects = [];
     };
-  }, [origin, places, selected, route, ready]);
+  }, [origin, places, selected, ready]);
   return (
     <div className="map-wrap">
       <div ref={element} className="map-canvas" aria-label="高德地图" />

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-SCHEMA_VERSION = 5
-PROMPT_VERSION = "2"
+SCHEMA_VERSION = 6
+PROMPT_VERSION = "3"
 
 
 class DecisionState(TypedDict, total=False):

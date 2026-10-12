@@ -22,7 +22,6 @@ from app.modules.decision.workflow.events import (
 )
 from app.modules.decision.workflow.graph import build_graph
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
-from app.modules.places.ports import GeoPlaceProvider
 from app.modules.places.service import PlaceService
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.ports import TaskStore
@@ -37,7 +36,6 @@ class DecisionRunner:
         repository: DecisionRepository,
         tasks: TaskStore,
         queries: DecisionQueryService,
-        amap: GeoPlaceProvider,
         places: PlaceService,
         llm: FoodDecisionLlm,
         lease_seconds: int,
@@ -48,7 +46,7 @@ class DecisionRunner:
         self.queries = queries
         self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
-        self.graph = build_graph(amap, places, llm, self.emit, self.step_started, self.save_state)
+        self.graph = build_graph(places, llm, self.emit, self.step_started, self.save_state)
 
     async def execute_claim(self, claim: TaskClaim) -> None:
         graph_job = asyncio.create_task(self._execute_task(claim))

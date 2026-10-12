@@ -30,8 +30,6 @@ class DiscoverySession(IdentityMixin, Base):
     origin_address: Mapped[str] = mapped_column(String(200), default="")
     budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    # Retained for historical records; new requests use radius_meters.
-    max_walking_minutes: Mapped[int | None] = mapped_column(Integer)
     radius_meters: Mapped[int] = mapped_column(Integer, nullable=False)
     preferred_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
     excluded_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -94,8 +92,6 @@ class PlaceCandidate(IdentityMixin, Base):
     latitude: Mapped[float] = mapped_column(nullable=False)
     longitude: Mapped[float] = mapped_column(nullable=False)
     straight_line_distance_meters: Mapped[int] = mapped_column(Integer, nullable=False)
-    walking_distance_meters: Mapped[int | None]
-    walking_duration_seconds: Mapped[int | None]
     rating: Mapped[float | None]
     average_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     business_status: Mapped[str] = mapped_column(String(16), default="unknown")
@@ -108,7 +104,6 @@ class PlaceCandidate(IdentityMixin, Base):
     reason: Mapped[str] = mapped_column(String(600), default="")
     warnings: Mapped[list[str]] = mapped_column(JSONB, default=list)
     navigation_url: Mapped[str | None] = mapped_column(String(1000))
-    route_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     place_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (

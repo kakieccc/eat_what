@@ -66,7 +66,6 @@ export function PlaceCard({
               {{
                 preference_match: "口味匹配",
                 distance_cost: "距离便利度",
-                walking_cost: "旧版步行成本",
                 budget_match: "预算匹配",
                 rating_quality: "评分质量",
                 availability_confidence: "营业可信度",
@@ -82,9 +81,9 @@ export function PlaceCard({
       <div className="card-actions">
         {navigation ? (
           <Button variant="outline" asChild>
-            <a href={navigation} target="_blank" rel="noopener noreferrer">高德导航</a>
+            <a href={navigation} target="_blank" rel="noopener noreferrer">在高德查看</a>
           </Button>
-        ) : <Button variant="outline" disabled>导航暂无数据</Button>}
+        ) : <Button variant="outline" disabled>地点暂无数据</Button>}
         <Button disabled={busy} onClick={onChoose}>
           选这家
         </Button>

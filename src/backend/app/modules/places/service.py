@@ -75,4 +75,7 @@ class PlaceService:
         )
 
     async def read(self, user_id: str, place_key: str) -> Place:
-        return await self.repository.read(user_id, place_key)
+        return self.with_navigation(await self.repository.read(user_id, place_key))
+
+    def with_navigation(self, place: Place) -> Place:
+        return place.model_copy(update={"navigation_url": self.provider.navigation(place)})

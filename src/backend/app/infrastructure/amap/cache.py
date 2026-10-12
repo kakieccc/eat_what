@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
-from app.infrastructure.amap.models import PlaceCache, RouteCache
+from app.infrastructure.amap.models import PlaceCache
 from app.infrastructure.amap.schemas import FetchedResponse
 
 log = logging.getLogger("food.amap")
@@ -19,28 +19,26 @@ class AmapCache:
     def __init__(
         self,
         sessions: async_sessionmaker[AsyncSession],
-        place_ttl_seconds: int,
-        route_ttl_seconds: int,
+        ttl_seconds: int,
         empty_ttl_seconds: int,
     ) -> None:
         self.sessions = sessions
-        self.place_ttl_seconds = place_ttl_seconds
-        self.route_ttl_seconds = route_ttl_seconds
+        self.ttl_seconds = ttl_seconds
         self.empty_ttl_seconds = empty_ttl_seconds
 
     @staticmethod
     def key(operation: str, params: dict[str, str]) -> str:
         return hashlib.sha256(
-            json.dumps([operation, params, "v3"], sort_keys=True).encode()
+            json.dumps([operation, params], sort_keys=True).encode()
         ).hexdigest()
 
     async def read(self, operation: str, params: dict[str, str]) -> FetchedResponse | None:
-        table = RouteCache if operation == "/v3/direction/walking" else PlaceCache
         async with self.sessions() as session:
             cached = (
                 await session.execute(
-                    select(table.payload).where(
-                        table.cache_key == self.key(operation, params), table.expires_at > now()
+                    select(PlaceCache.payload).where(
+                        PlaceCache.cache_key == self.key(operation, params),
+                        PlaceCache.expires_at > now(),
                     )
                 )
             ).one_or_none()
@@ -68,19 +66,12 @@ class AmapCache:
         *,
         empty: bool,
     ) -> None:
-        table = RouteCache if operation == "/v3/direction/walking" else PlaceCache
-        ttl = (
-            self.empty_ttl_seconds
-            if empty
-            else self.route_ttl_seconds
-            if table is RouteCache
-            else self.place_ttl_seconds
-        )
+        ttl = self.empty_ttl_seconds if empty else self.ttl_seconds
         payload = entry.model_dump(mode="json")
         expires_at = entry.fetched_at + timedelta(seconds=ttl)
         async with self.sessions.begin() as session:
             await session.execute(
-                insert(table)
+                insert(PlaceCache)
                 .values(
                     cache_key=self.key(operation, params), payload=payload, expires_at=expires_at
                 )

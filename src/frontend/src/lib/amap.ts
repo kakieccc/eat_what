@@ -19,7 +19,6 @@ export interface MarkerInstance {
 export interface AmapAPI {
   Map: new (element: HTMLElement, options: object) => MapInstance;
   Marker: new (options: object) => MarkerInstance;
-  Polyline: new (options: object) => unknown;
   convertFrom(
     point: [number, number],
     type: string,

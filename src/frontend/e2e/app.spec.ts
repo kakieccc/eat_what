@@ -1,11 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { defaults } from "../src/lib/schemas";
 test("home, form validation and manual location entry", async ({ page }) => {
-  await page.route("**/api/v2/auth/me", (route) => route.fulfill({ json: {
+  await page.route("**/auth/me", (route) => route.fulfill({ json: {
     success: true,
     data: { user: { id: "user-1", username: "tester", displayName: "测试账号", createdAt: "2026-01-01T00:00:00Z" }, csrfToken: "test-csrf" },
   } }));
-  await page.route("**/api/v2/preferences", (route) => route.fulfill({ json: {
+  await page.route("**/preferences", (route) => route.fulfill({ json: {
     success: true, data: defaults,
   } }));
   const errors: string[] = [];
@@ -19,15 +19,15 @@ test("home, form validation and manual location entry", async ({ page }) => {
     path: "/tmp/food-home-" + test.info().project.name + ".png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "20", exact: true }).click();
+  await page.getByRole("radio", { name: "1 km", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "20", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+    page.getByRole("radio", { name: "1 km", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
   await page.getByLabel("最低预算").fill("100");
   await page.getByLabel("最高预算").fill("20");
   await page.getByRole("button", { name: "帮我选一家", exact: true }).click();
   await expect(
-    page.getByText("请检查预算上下限、步行时间及是否有重复排除的菜系。"),
+    page.getByText("请检查预算上下限、搜索半径及是否有重复排除的菜系。"),
   ).toBeVisible();
   await page.getByRole("button", { name: /更多条件/ }).click();
   await expect(
@@ -64,15 +64,11 @@ test("real decision journey", async ({ page }) => {
     timeout: 45000,
   });
   await page
-    .getByRole("button", { name: "看路线", exact: true })
-    .first()
-    .click();
-  await page
     .getByRole("button", { name: "选这家", exact: true })
     .first()
     .click();
   await expect(
-    page.getByRole("link", { name: "打开高德导航" }),
+    page.getByRole("link", { name: "在高德查看" }),
   ).toHaveAttribute("href", /^https:\/\/uri\.amap\.com\//);
   await page.getByRole("link", { name: "历史", exact: true }).click();
   await expect(page.locator(".history-list article").first()).toBeVisible();

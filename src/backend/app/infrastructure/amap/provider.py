@@ -9,16 +9,15 @@ from app.core.concurrency import deadline_after
 from app.core.errors import AppError
 from app.infrastructure.amap import mappers
 from app.infrastructure.amap.cache import AmapCache
-from app.infrastructure.amap.client import WALKING, AmapClient, unavailable
+from app.infrastructure.amap.client import AmapClient, unavailable
 from app.infrastructure.amap.schemas import (
     PlaceResponse,
     RawResponse,
     ReverseResponse,
-    RouteResponse,
     TipsResponse,
 )
 from app.modules.location.schemas import Origin, Point
-from app.modules.places.schemas import Place, Route
+from app.modules.places.schemas import Place
 
 log = logging.getLogger("food.amap")
 
@@ -49,7 +48,7 @@ class AmapGeoPlaceProvider:
                     }
                 )
             )
-            raise unavailable(operation) from None
+            raise unavailable() from None
 
     async def _fetch[Response: RawResponse, Result](
         self,
@@ -158,22 +157,6 @@ class AmapGeoPlaceProvider:
                 raise AppError("PLACE_NOT_FOUND", "地点详情暂不可用", 404)
             return rows[0]
 
-    async def walking(
-        self, origin: Point, destination: Point, *, deadline: float | None = None
-    ) -> Route | None:
-        async with self._budget(WALKING, deadline) as until:
-            return await self._fetch(
-                WALKING,
-                {
-                    "origin": mappers.coordinates(origin),
-                    "destination": mappers.coordinates(destination),
-                },
-                RouteResponse,
-                lambda response, _: mappers.walking(response),
-                lambda route: route is None,
-                until,
-            )
-
     async def reverse(self, origin: Point, *, deadline: float | None = None) -> Origin:
         operation = "/v3/geocode/regeo"
         async with self._budget(operation, deadline) as until:
@@ -199,5 +182,5 @@ class AmapGeoPlaceProvider:
             )
 
     @staticmethod
-    def navigation(origin: Origin, place: Place) -> str:
-        return mappers.navigation(origin, place)
+    def navigation(place: Place) -> str:
+        return mappers.navigation(place)

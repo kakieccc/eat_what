@@ -22,7 +22,6 @@ from app.modules.decision.workflow.nodes import (
     select_diverse,
 )
 from app.modules.decision.workflow.state import State
-from app.modules.places.ports import GeoPlaceProvider
 from app.modules.places.service import PlaceService
 
 Graph = CompiledStateGraph[State, Any, State, State]
@@ -52,7 +51,6 @@ def route(state: State) -> str:
 
 
 def build_graph(
-    amap: GeoPlaceProvider,
     places: PlaceService,
     llm: FoodDecisionLlm,
     emit: Emitter,
@@ -93,7 +91,7 @@ def build_graph(
         ("score_places", "正在比较候选", score_places.scoring),
         ("rerank_places", "正在结合偏好排序", rerank_places.build(llm)),
         ("select_diverse", "正在挑选不同选择", select_diverse.select),
-        ("generate_explanations", "正在生成推荐理由", generate_explanations.build(amap, places, llm)),
+        ("generate_explanations", "正在生成推荐理由", generate_explanations.build(places, llm)),
     ]
     for name, label, fn in definitions:
         builder.add_node(name, RunnableLambda(wrapped(name, label, fn)))

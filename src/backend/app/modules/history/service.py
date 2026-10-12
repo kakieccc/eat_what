@@ -2,15 +2,36 @@ from app.modules.decision.schemas import DecisionRunResponse
 from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.history.ports import HistoryRepository
 from app.modules.history.schemas import HistoryPage
+from app.modules.places.service import PlaceService
 
 
 class HistoryService:
-    def __init__(self, repository: HistoryRepository, queries: DecisionQueryService) -> None:
+    def __init__(
+        self, repository: HistoryRepository, queries: DecisionQueryService, places: PlaceService
+    ) -> None:
         self.repository = repository
         self.queries = queries
+        self.places = places
 
     async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage:
-        return await self.repository.list_sessions(user_id, cursor, limit)
+        page = await self.repository.list_sessions(user_id, cursor, limit)
+        return page.model_copy(
+            update={
+                "items": [
+                    item.model_copy(
+                        update={
+                            "choices": [
+                                choice.model_copy(
+                                    update={"place": self.places.with_navigation(choice.place)}
+                                )
+                                for choice in item.choices
+                            ]
+                        }
+                    )
+                    for item in page.items
+                ]
+            }
+        )
 
     async def runs(self, user_id: str, session_id: str) -> list[DecisionRunResponse]:
         run_ids = await self.repository.runs(user_id, session_id)

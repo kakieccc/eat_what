@@ -36,7 +36,7 @@ async def create_decision_run(
     run_id = await commands.create(
         user.user.id, body, idempotency_key, request.state.request_id
     )
-    response.headers["Location"] = f"/api/v2/decision-runs/{run_id}"
+    response.headers["Location"] = f"/decision-runs/{run_id}"
     return Envelope(data=await queries.get_for_user(user.user.id, run_id))
 
 
@@ -90,7 +90,7 @@ async def create_decision_refinement(
     child_id = await commands.refine(
         user.user.id, run_id, body, idempotency_key, request.state.request_id
     )
-    response.headers["Location"] = f"/api/v2/decision-runs/{child_id}"
+    response.headers["Location"] = f"/decision-runs/{child_id}"
     return Envelope(data=await queries.get_for_user(user.user.id, child_id))
 
 

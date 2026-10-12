@@ -12,7 +12,7 @@ from app.modules.location.router import router as locations_router
 from app.modules.places.router import router as places_router
 from app.modules.preferences.router import router as preferences_router
 
-router = APIRouter(prefix="/api/v2", responses=error_responses(500))
+router = APIRouter(responses=error_responses(500))
 router.include_router(health_router)
 router.include_router(auth_router)
 router.include_router(locations_router)
