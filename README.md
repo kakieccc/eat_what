@@ -24,11 +24,19 @@ cp .env.example .env
 
 不要将密钥提交到版本控制。缺少配置或仍使用 `replace-` 占位符时，后端启动失败。
 
-先创建数据库和数据库用户，并执行当前 Alembic 迁移准备业务表结构；应用启动时会检查数据库连接并启动持久化 Task Worker：
+先创建数据库和数据库用户；应用启动时会按当前 ORM 模型创建缺失表，并启动持久化 Task Worker：
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
+
+开发阶段不维护数据库迁移。修改表结构后，先停止后端与 Worker，再重建开发表：
+
+```bash
+uv run python -m app.infrastructure.database.tables --rebuild
+```
+
+该命令会删除 `DATABASE_URL` 所指数据库当前 schema 的全部表及数据，再按当前 ORM 模型创建表，包括清理已废弃的旧表。正常启动只创建缺失表，不修改已有表结构。使用专用开发数据库；准备上线时再引入数据库迁移。
 
 另一个终端启动前端：
 
@@ -74,7 +82,7 @@ pnpm exec playwright install chromium
 pnpm e2e
 ```
 
-后端 `tests/` 包含规则、SSE、Worker 和模块边界单元测试，以及使用真实 PostgreSQL 的事务、任务执行和 HTTP 集成测试；高德和 LLM 使用测试替身，不发起外部请求。
+后端 `tests/` 当前验证真实 PostgreSQL 建表、重建、失败回滚及选择接口的并发幂等，不发起高德或 LLM 请求。
 
 数据库测试只读取显式设置的 `TEST_DATABASE_URL`，要求数据库名称以 `_test` 结尾，并为每个测试创建独立 schema，结束后只删除该 schema。测试账号需要创建 schema 的权限；不读取应用 `.env` 中的数据库连接。未设置该变量时，数据库测试会跳过，跳过不代表通过。
 
@@ -92,7 +100,7 @@ uv run pytest -q -m 'not database'
 
 - `app/main.py` 创建应用并挂载路由；`app/api` 使用扁平结构：`router.py` 汇总路由，`dependencies.py` 提供公共依赖，`schemas.py` 定义公共响应与错误模型，`errors.py` 处理异常及错误响应声明，`health.py` 提供健康检查，`middleware.py` 注册中间件。
 - `app/modules` 按 auth、location、places、preferences、history、choice、task、decision 组织业务代码。模块内 `router.py` 处理 HTTP，`schemas.py` 定义 Pydantic 请求、响应与可复用数据结构，`models.py` 定义 ORM 表，`service.py` 编排业务用例，`repository.py` 实现存储，`ports.py` 定义依赖协议。简单模块仅保留需要的文件，location 和 history 不创建自己的 ORM 表。
-- 业务路由通过模块的 `dependencies.py` 注入 service；`app/container.py` 保存进程级共享实例，`app/bootstrap.py` 统一组装并通过 lifespan 管理资源。`app/infrastructure` 保留高德、LLM 和共享数据库设施；密码哈希实现位于 `app/modules/auth/passwords.py`；Alembic 在 `migrations/env.py` 中统一加载业务 ORM 模型与高德缓存模型。
+- 业务路由通过模块的 `dependencies.py` 注入 service；`app/container.py` 保存进程级共享实例，`app/bootstrap.py` 统一组装并通过 lifespan 管理资源。`app/infrastructure` 保留高德、LLM 和共享数据库设施；密码哈希实现位于 `app/modules/auth/passwords.py`；`app/infrastructure/database/tables.py` 统一注册 ORM 模型、创建表并提供开发重建命令。
 - `infrastructure/amap/provider.py` 编排地图操作，`client.py` 管理 HTTP、超时、并发、请求间隔和重试，`schemas.py` 定义高德响应及缓存封装，`mappers.py` 转换坐标和业务数据，`cache.py` 读写缓存，`models.py` 定义缓存表。`location/ports.py` 的 `LocationProvider` 与 `places/ports.py` 的 `GeoPlaceProvider` 由同一适配器实现；菜系推断位于 `places/rules.py`，搜索与详情统一经过 `PlaceService`。
 - `app/modules/decision/service/` 内的 `commands.py` 编排创建、调整、确认恢复和幂等，`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件，模块内的 `sse.py` 编码 SSE 帧；`repository/` 包含存储、事务实现和 mapper；`rules/` 存放筛选、评分和调整规则；`workflow/` 保留 LangGraph State、节点、事件和 Prompt。
 - `decision/service/llm.py` 组织偏好解析、候选重排和推荐理由，统一调用 `rules/llm.py` 校验菜系、候选与事实证据；LLM 输出模型定义在模块的 `schemas.py`。`infrastructure/llm/provider.py` 只负责通用结构化调用、模型参数和调用异常转换，通过 `StructuredLlm` 协议注入业务服务。
@@ -110,7 +118,7 @@ uv run pytest -q -m 'not database'
 - `GET /health/live` 检查进程；`GET /health/ready` 检查数据库与工作流初始化，不发起收费上游调用。
 - PWA、生产部署、自动长期偏好学习、收藏、账号、骑行驾车和评测看板均不在本轮范围。
 - 当前版本包含用户登录和账户归属；不提供跨设备同步以外的长期偏好学习。
-- 新工作流版本为 `6`、提示词版本为 `3`。部署前停止后端与 Worker，执行到 `0005_radius_only` 迁移，再启动新版本；迁移删除旧时长条件、路线字段与专用缓存表，并将旧未完成任务标记为 `WORKFLOW_UPGRADED`。已完成历史与原始 JSON 快照保留，读取时仅保留当前字段；旧记录使用其他半径时，重新推荐前必须选择四档之一。前端草稿迁移到版本 `2`，保留旧半径并提示重新选择。
+- 当前工作流版本为 `6`、提示词版本为 `3`。开发阶段表结构或工作流状态变更后直接重建表，重新注册账号并生成推荐。前端草稿版本为 `2`，保留旧半径并提示重新选择。
 
 ## API 资源
 

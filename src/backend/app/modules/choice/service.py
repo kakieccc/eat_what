@@ -22,7 +22,7 @@ class ChoiceService:
             candidate = await tx.candidate(candidate_id)
             if candidate.run_status != "completed":
                 raise AppError("INVALID_STATE", "决策尚未完成", 409)
-            choice_id = await tx.create_choice(candidate, feedback, idempotency_key)
+            choice_id = await tx.create_choice(candidate, feedback)
             result = {"id": choice_id, "candidateId": candidate.id}
             await tx.record_idempotency(idempotency_key, digest, result)
             return result

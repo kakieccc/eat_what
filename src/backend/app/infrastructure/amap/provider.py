@@ -56,7 +56,6 @@ class AmapGeoPlaceProvider:
         params: dict[str, str],
         schema: type[Response],
         mapper: Callable[[Response, datetime], Result],
-        is_empty: Callable[[Result], bool],
         deadline: float,
     ) -> Result:
         started = asyncio.get_running_loop().time()
@@ -102,7 +101,7 @@ class AmapGeoPlaceProvider:
             raise AppError("AMAP_SCHEMA_ERROR", "地图响应格式异常", 502) from None
         if asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError
-        await self.cache.write(operation, params, entry, empty=is_empty(result))
+        await self.cache.write(operation, params, entry, empty=not result)
         return result
 
     async def search(
@@ -132,7 +131,6 @@ class AmapGeoPlaceProvider:
                     },
                     PlaceResponse,
                     lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-                    lambda places: not places,
                     until,
                 )
                 unique.update((place.id, place) for place in batch)
@@ -150,7 +148,6 @@ class AmapGeoPlaceProvider:
                 {"id": external_id, "extensions": "all"},
                 PlaceResponse,
                 lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-                lambda places: not places,
                 until,
             )
             if not rows:
@@ -165,7 +162,6 @@ class AmapGeoPlaceProvider:
                 {"location": mappers.coordinates(origin), "extensions": "base"},
                 ReverseResponse,
                 lambda response, _: mappers.reverse(response, origin),
-                lambda origin: False,
                 until,
             )
 
@@ -177,7 +173,6 @@ class AmapGeoPlaceProvider:
                 {"keywords": keywords, "datatype": "poi"},
                 TipsResponse,
                 lambda response, _: mappers.tips(response),
-                lambda tips: not tips,
                 until,
             )
 

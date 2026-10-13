@@ -98,11 +98,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(await request<User>("/auth/me", { displayName }, "PATCH"));
   };
   const changePassword = async (currentPassword: string, newPassword: string) => {
-    const data = await request<AuthPayload>("/auth/change-password", {
+    await request<{ loggedOut: boolean }>("/auth/change-password", {
       currentPassword, newPassword,
     });
-    setCsrfToken(data.csrfToken);
-    setUser(data.user);
+    becomeAnonymous();
   };
   const logout = async () => {
     await request<{ loggedOut: boolean }>("/auth/logout", {});

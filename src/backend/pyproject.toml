@@ -2,7 +2,7 @@
 name = "today-food-api"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30", "pydantic>=2.10,<3", "pydantic-settings>=2.6", "sqlalchemy[asyncio]>=2.0,<3", "asyncpg>=0.30", "httpx>=0.28", "langgraph>=1,<2", "langchain>=1,<2", "langchain-openai>=1,<2", "pwdlib[argon2]>=0.2", "alembic>=1.14"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30", "pydantic>=2.10,<3", "pydantic-settings>=2.6", "sqlalchemy[asyncio]>=2.0,<3", "asyncpg>=0.30", "httpx>=0.28", "langgraph>=1,<2", "langchain>=1,<2", "langchain-openai>=1,<2", "pwdlib[argon2]>=0.2"]
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6", "ruff>=0.9", "mypy>=1.14"]
 [tool.pytest.ini_options]

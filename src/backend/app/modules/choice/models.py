@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base, IdentityMixin
@@ -18,6 +18,3 @@ class PlaceChoice(IdentityMixin, Base):
         ForeignKey("place_candidates.id"), nullable=False
     )
     feedback: Mapped[str] = mapped_column(String(300), default="")
-    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False)
-
-    __table_args__ = (UniqueConstraint("user_id", "idempotency_key"),)

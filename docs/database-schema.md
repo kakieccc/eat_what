@@ -1,8 +1,8 @@
 # 数据库表结构设计
 
-本文依据 `src/backend/app/modules/*/models.py`、`src/backend/app/infrastructure/amap/models.py` 的 SQLAlchemy 模型和 `src/backend/migrations/versions/` 的 Alembic 迁移编写。所有表共用 `app/infrastructure/database/base.py` 的 ORM 基类，Alembic 在 `migrations/env.py` 中统一加载业务与缓存模型。当前设计包含 14 张应用表，使用 PostgreSQL；`alembic_version` 是 Alembic 的版本记录表，不属于应用表。
+本文依据 `src/backend/app/modules/*/models.py`、`src/backend/app/infrastructure/amap/models.py` 的 SQLAlchemy 模型编写。所有表共用 `app/infrastructure/database/base.py` 的 ORM 基类，由 `app/infrastructure/database/tables.py` 统一注册、创建和开发重建。当前设计包含 14 张应用表，使用 PostgreSQL。
 
-所有业务表都有 `id UUID` 主键，以及 `created_at`、`updated_at TIMESTAMP WITH TIME ZONE` 两个非空时间字段。主键和时间由 SQLAlchemy 在写入时生成或更新；迁移 SQL 没有给这些字段设置数据库端默认值。下文只列各表自己的字段。字段后的 `?` 表示允许 `NULL`；未标 `?` 的字段在迁移中均为 `NOT NULL`。模型中 `default=...` 也是应用端默认值，直接执行 SQL 插入时仍需显式提供必填字段。
+所有业务表都有 `id UUID` 主键，以及 `created_at`、`updated_at TIMESTAMP WITH TIME ZONE` 两个非空时间字段。主键和时间由 SQLAlchemy 在写入时生成或更新，没有数据库端默认值。下文只列各表自己的字段。字段后的 `?` 表示允许 `NULL`；未标 `?` 的字段均为 `NOT NULL`。模型中 `default=...` 也是应用端默认值，直接执行 SQL 插入时仍需显式提供必填字段。
 
 ## 关系总览
 
@@ -177,9 +177,8 @@ erDiagram
 | `discovery_session_id` | `UUID` | 外键 → `discovery_sessions.id`，关联选餐会话。 |
 | `place_candidate_id` | `UUID` | 外键 → `place_candidates.id`，被选择的候选。 |
 | `feedback` | `VARCHAR(300)` | 用户反馈；模型默认空字符串。 |
-| `idempotency_key` | `VARCHAR(100)` | 创建选择记录时的幂等键。 |
 
-约束与索引：`UNIQUE (user_id, idempotency_key)`；`user_id` 有索引。外键本身不会验证候选餐厅是否属于所填的选餐会话或用户。
+索引：`user_id` 有索引。请求幂等由共用的 `idempotency_records` 表负责，与选择记录在同一事务中写入。外键本身不会验证候选餐厅是否属于所填的选餐会话或用户。
 
 ## 持久化任务与 API 幂等
 
@@ -266,10 +265,10 @@ erDiagram
 
 约束与索引：`UNIQUE (cache_key)`；`expires_at` 有索引。过期数据不会由数据库自动删除。
 
-## 迁移与当前状态
+## 开发建表与重建
 
-首次迁移版本为 `0001_user_accounts`；`0002_timezone_aware_timestamps` 修正三个时间列的时区；`0003_simplify_workflow_state` 简化 Task 快照；`0004_radius_recommendations` 新增常用半径，将已有偏好填充为 `2000` 并升级推荐约束。
+开发阶段以当前 ORM 模型为表结构来源，不维护数据库迁移。应用启动时创建缺失表，保留已有数据；它不会自动修改已有表结构。
 
-`0005_radius_only` 删除专用路线缓存表、历史时长条件和候选路线字段，将旧未完成任务及其确认状态标记为已升级。当前工作流版本为 `6`、提示词版本为 `3`。已完成记录与原始 JSON 快照保留，读取时仅接受当前 schema 字段，忽略已移除的数据；地点链接根据当前坐标重新生成。旧半径不在四档内时，必须重新选择才可提交新推荐。
+修改模型后先停止后端与 Worker，在 `src/backend` 执行 `uv run python -m app.infrastructure.database.tables --rebuild`。该命令读取 `DATABASE_URL`，在同一事务中删除当前 schema 的全部表及数据，再创建当前模型定义的 14 张表，废弃的旧表也会被删除。重建失败时事务回滚。
 
-上线顺序为停止后端与 Worker、执行迁移、启动新版本。迁移不会由后端启动自动执行；在 `src/backend` 执行 `.venv/bin/alembic upgrade head` 会更新 `DATABASE_URL` 指向的数据库。降级只能恢复已删除的表和列结构，不恢复已删除的数据，也不会恢复已终止任务。回退至 `base` 会删除全部应用表及其数据。
+重建命令仅用于专用开发数据库，不保留账号、历史、任务或缓存。准备上线时再引入数据库迁移及持久数据升级方案。

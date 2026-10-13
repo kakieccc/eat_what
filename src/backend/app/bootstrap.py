@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from openai import AsyncOpenAI
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.container import Container
@@ -17,6 +16,7 @@ from app.infrastructure.amap.cache import AmapCache
 from app.infrastructure.amap.client import AmapClient
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
 from app.infrastructure.database.session import create_sessions, engine_of
+from app.infrastructure.database.tables import create_tables
 from app.infrastructure.llm.provider import OpenAICompatibleLlm
 from app.modules.auth.passwords import Argon2PasswordHasher
 from app.modules.auth.repository import SqlAuthRepository
@@ -120,8 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ) as llm_client,
     ):
         try:
-            async with sessions() as db:
-                await db.execute(text("SELECT 1"))
+            await create_tables(engine_of(sessions))
             app.state.container = build_container(settings, sessions, client, llm_client)
             app.state.ready = True
             worker = asyncio.create_task(app.state.container.worker.run())

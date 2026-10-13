@@ -75,7 +75,8 @@ class AuthService:
             raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
         token, csrf, token_hash = self._tokens()
         await self.repository.create_session(
-            user.id, token_hash, csrf, now() + timedelta(days=self.session_days)
+            user.id, token_hash, csrf, now() + timedelta(days=self.session_days),
+            expected_password_hash=encoded,
         )
         return SignedIn(profile(user), token, csrf)
 
@@ -96,17 +97,15 @@ class AuthService:
 
     async def change_password(
         self, context: AuthContext, current_password: str, new_password: str
-    ) -> SignedIn:
+    ) -> None:
+        await self.repository.consume_limit(digest(f"change-password:{context.user.id}"), 10, 900)
         user = await self.repository.by_username(context.user.username)
         if user is None or not await self.passwords.verify(current_password, user.password):
             raise AppError("INVALID_CREDENTIALS", "当前密码错误", 401)
         encoded = await self.passwords.hash(new_password)
-        token, csrf, token_hash = self._tokens()
         await self.repository.change_password(
             context.user.id, context.session_id, encoded,
-            token_hash, csrf, now() + timedelta(days=self.session_days),
         )
-        return SignedIn(context.user, token, csrf)
 
     async def logout(self, context: AuthContext) -> None:
         await self.repository.delete_session(context.session_id)

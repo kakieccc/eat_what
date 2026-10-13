@@ -67,9 +67,13 @@ class SqlAuthRepository:
             return record(row) if row else None
 
     async def create_session(
-        self, user_id: str, token_hash: str, csrf_token: str, expires_at: datetime
+        self, user_id: str, token_hash: str, csrf_token: str, expires_at: datetime,
+        *, expected_password_hash: str,
     ) -> None:
         async with self.sessions.begin() as session:
+            user = await session.get(User, user_id, with_for_update=True)
+            if user is None or user.password != expected_password_hash:
+                raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
             session.add(AuthSession(
                 user_id=user_id, token_hash=token_hash,
                 csrf_token=csrf_token, expires_at=expires_at,
@@ -96,7 +100,6 @@ class SqlAuthRepository:
 
     async def change_password(
         self, user_id: str, session_id: str, password: str,
-        token_hash: str, csrf_token: str, expires_at: datetime,
     ) -> None:
         async with self.sessions.begin() as session:
             user = await session.get(User, user_id, with_for_update=True)
@@ -108,10 +111,6 @@ class SqlAuthRepository:
                 raise AppError("AUTH_REQUIRED", "请重新登录", 401)
             user.password = password
             await session.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
-            session.add(AuthSession(
-                user_id=user_id, token_hash=token_hash,
-                csrf_token=csrf_token, expires_at=expires_at,
-            ))
 
     async def delete_session(self, session_id: str) -> None:
         async with self.sessions.begin() as session:

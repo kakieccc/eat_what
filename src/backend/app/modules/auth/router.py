@@ -89,16 +89,17 @@ async def update_me(
     return Envelope(data=await auth.update_display_name(user, body.display_name))
 
 
-@router.post("/change-password", responses=error_responses(401, 403, 422, 503))
+@router.post("/change-password", responses=error_responses(401, 403, 422, 429, 503))
 async def change_password(
     body: ChangePasswordRequest, response: Response,
-    user: MutationUserDependency, auth: AuthServiceDependency, settings: SettingsDependency,
-) -> Envelope[AuthPayload]:
-    signed = await auth.change_password(
+    user: MutationUserDependency, auth: AuthServiceDependency,
+) -> Envelope[dict[str, bool]]:
+    await auth.change_password(
         user, body.current_password, body.new_password
     )
-    cookie(response, signed, settings)
-    return Envelope(data=AuthPayload(user=signed.user, csrf_token=signed.csrf_token))
+    response.delete_cookie("food_session", path="/")
+    response.headers["Cache-Control"] = "no-store"
+    return Envelope(data={"loggedOut": True})
 
 
 @router.post("/logout", responses=error_responses(401, 403, 422, 503))

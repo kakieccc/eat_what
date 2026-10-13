@@ -65,7 +65,7 @@ src/
         └── main.py          # FastAPI 应用入口
 ```
 
-代码按业务模块组织，模块内部保留路由、业务类型与规则、服务、仓储和 ORM 的职责区分；业务类型与纯规则不导入 HTTP、ORM 或 LangGraph。业务路由通过模块的 `dependencies.py` 注入 service。数据库连接与 ORM 基类共用，`infrastructure/database/registry.py` 显式注册全部模块的表。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
+代码按业务模块组织，模块内部保留路由、业务类型与规则、服务、仓储和 ORM 的职责区分；业务类型与纯规则不导入 HTTP、ORM 或 LangGraph。业务路由通过模块的 `dependencies.py` 注入 service。数据库连接与 ORM 基类共用，`infrastructure/database/tables.py` 统一注册全部模型，启动时创建缺失表；开发阶段表结构变更后通过 `uv run python -m app.infrastructure.database.tables --rebuild` 重建全部表，不维护数据库迁移。`bootstrap.py` 是具体实现的组装入口；它创建一个进程级 Container、共享 HTTP Client 和数据库 Session Factory，并在 lifespan 中启动/停止 Worker。Container 是服务引用的集合，不是每位用户共享的可变业务会话。
 
 每次数据库操作使用独立 `AsyncSession`，并行地点查询不共享 Session。创建、调整、确认恢复、选择地点通过各自的事务上下文保证跨表原子性。Task 领取、心跳、状态和事件使用短事务；高德与 LLM 调用期间不持有数据库事务。当前 Worker 与 API 运行在同一进程生命周期，后续扩大容量时需评估拆分 Worker 与 API 进程、连接池和上游配额。
 
@@ -127,7 +127,7 @@ JSON 使用 camelCase，通常包装为 `{ "success": true, "data": ..., "meta":
 → generate_explanations → 结束
 ```
 
-自然语言为空时跳过解析；解析出的搜索半径、预算或排除条件变更可能进入确认状态。确认通过新 Task 继续；不使用 LangGraph Checkpointer 或 `Command(resume=...)`。持久化的工作流版本目前为 `6`，提示词版本为 `3`；旧的未完成 Task 在迁移时标记为 `WORKFLOW_UPGRADED`，迁移节点名或 State 格式时需考虑已有 Task 的恢复。
+自然语言为空时跳过解析；解析出的搜索半径、预算或排除条件变更可能进入确认状态。确认通过新 Task 继续；不使用 LangGraph Checkpointer 或 `Command(resume=...)`。持久化的工作流版本目前为 `6`，提示词版本为 `3`；开发阶段工作流状态或表结构变更后直接重建表，准备上线时再设计已有 Task 的升级和恢复。
 
 `DecisionState` 当前字段：`schema_version`、`task_id`、`decision_run_id`、`request`、`places`、`excluded`、`recent`、`old_cuisines`、`action`、`intent`、`changes`、`awaiting_confirmation`、`confirmation_answer`、`next_node`、`filter_summary`，以及执行期的 `lease_token`、`already_completed`。State 仅保存可 JSON 序列化的恢复数据，不应包含数据库 Session、Client、Key、完整 Prompt 或完整高德 Raw Payload。历史展示从业务表读取。
 
@@ -145,7 +145,7 @@ Task 表保存 queued/running/waiting_confirmation/succeeded/failed 等状态、
 
 ### 5.3 数据库边界
 
-当前结构包含 14 张应用表：账号与认证、偏好、发现会话、决策与确认、地点候选与选择、地点缓存、幂等记录及 Task 执行记录。Session 记录 `radius_meters` 等输入；Run 记录过滤摘要、工作流版本与终态；Candidate 保存地点快照和直线距离；Choice 使用 `created_at` 记录创建时间。业务数据通过 `user_id` 或发现会话归属用户。创建 Session、Run、Task 和幂等记录在一个事务中；Task 状态使用短事务。`0005_radius_only` 删除旧时长条件、路线字段及专用缓存，历史 JSON 快照只按当前 schema 读取有效字段。
+当前结构包含 14 张应用表：账号与认证、偏好、发现会话、决策与确认、地点候选与选择、地点缓存、幂等记录及 Task 执行记录。Session 记录 `radius_meters` 等输入；Run 记录过滤摘要、工作流版本与终态；Candidate 保存地点快照和直线距离；Choice 使用 `created_at` 记录创建时间。业务数据通过 `user_id` 或发现会话归属用户。创建 Session、Run、Task 和幂等记录在一个事务中；Task 状态使用短事务。表结构以当前 ORM 为准，开发期间变更后直接重建。
 
 ## 6. 前端当前流程与体验目标
 
@@ -187,7 +187,7 @@ LLM 服务需要支持 Responses API 的严格 `text.format=json_schema`。调�
 
 浏览器 JS API 与后端 Web 服务 API 需要分别配置对应 Key；前端安全码也必须配置。配置缺失或仍为占位符时，后端校验失败，前端显示配置提示。旧文档中的 `API_V1_PREFIX`、`DATABASE_POOL_SIZE`、`LANGSMITH_*`、`VITE_ENABLE_EVALUATION_PAGE` 目前都不是应用配置项。
 
-当前可用的验证命令在 README 中。后端 `tests/` 覆盖规则、SSE、Worker、模块导入及 ORM 注册，并通过隔离 PostgreSQL 验证事务、幂等、确认恢复、租约、鉴权和路由协作。数据库测试必须显式设置 `TEST_DATABASE_URL`，未配置时跳过；高德和 LLM 使用测试替身，测试通过不代表真实上游联调通过。
+当前可用的验证命令在 README 中。后端 `tests/` 当前通过隔离 PostgreSQL 验证建表、重建、失败回滚及选择接口的并发幂等。数据库测试必须显式设置 `TEST_DATABASE_URL`，未配置时跳过；测试不请求高德或 LLM，不代表真实上游联调通过。
 
 ## 8. 待决设计与后续工作
 

@@ -37,6 +37,16 @@ def place(raw: RawPlace, origin: Point, fetched_at: datetime) -> Place:
     rating = number(raw.biz_ext.rating)
     cost = number(raw.biz_ext.cost)
     hours = raw.biz_ext.opentime2 or raw.biz_ext.opentime
+    photos = []
+    for photo in raw.photos:
+        try:
+            url = urlparse(photo.url)
+        except ValueError:
+            continue
+        if url.scheme == "https" and url.hostname:
+            photos.append(photo.url)
+            if len(photos) == 3:
+                break
     return Place(
         id=str(uuid5(NAMESPACE_URL, "amap:" + raw.id)),
         external_id=raw.id,
@@ -53,7 +63,7 @@ def place(raw: RawPlace, origin: Point, fetched_at: datetime) -> Place:
         phone=raw.tel
         if isinstance(raw.tel, str) and re.fullmatch(r"[0-9+; -]{3,80}", raw.tel)
         else None,
-        photos=[p.url for p in raw.photos if urlparse(p.url).scheme == "https"][:3],
+        photos=photos,
         data_updated_at=fetched_at,
     )
 
@@ -63,7 +73,11 @@ def places(response: PlaceResponse, origin: Point, fetched_at: datetime) -> list
 
 
 def reverse(response: ReverseResponse, origin: Point) -> Origin:
-    return Origin(**origin.model_dump(), address=response.regeocode.formatted_address)
+    return Origin(
+        longitude=origin.longitude,
+        latitude=origin.latitude,
+        address=response.regeocode.formatted_address[:200],
+    )
 
 
 def tips(response: TipsResponse) -> list[Origin]:

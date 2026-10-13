@@ -43,14 +43,13 @@ class ChoiceTransaction:
         return CandidateSnapshot(candidate.id, run.discovery_session_id, run.status)
 
     async def create_choice(
-        self, candidate: CandidateSnapshot, feedback: str, key: str
+        self, candidate: CandidateSnapshot, feedback: str
     ) -> str:
         choice = PlaceChoice(
             user_id=self.user_id,
             discovery_session_id=candidate.discovery_session_id,
             place_candidate_id=candidate.id,
             feedback=feedback,
-            idempotency_key=key,
         )
         self.session.add(choice)
         await self.session.flush()
