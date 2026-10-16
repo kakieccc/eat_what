@@ -14,8 +14,9 @@ class Preference(IdentityMixin, Base):
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
 
-    preferred_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    excluded_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    preferred_foods: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    excluded_foods: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    allowed_foods: Mapped[list[str]] = mapped_column(JSONB, default=list)
     disliked_places: Mapped[list[str]] = mapped_column(JSONB, default=list)
     typical_budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     typical_budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))

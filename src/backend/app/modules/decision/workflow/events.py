@@ -38,11 +38,6 @@ class ResultEvent(Model):
     data: dict[str, JsonValue]
 
 
-class ConfirmationRequired(Model):
-    type: Literal["confirmationRequired"] = "confirmationRequired"
-    data: dict[str, JsonValue]
-
-
 class RunFailed(Model):
     type: Literal["runFailed"] = "runFailed"
     error: WorkflowError
@@ -54,12 +49,6 @@ class Heartbeat(Model):
 
 
 DecisionEvent = Annotated[
-    RunStarted
-    | NodeStarted
-    | NodeCompleted
-    | ResultEvent
-    | ConfirmationRequired
-    | RunFailed
-    | Heartbeat,
+    RunStarted | NodeStarted | NodeCompleted | ResultEvent | RunFailed | Heartbeat,
     Field(discriminator="type"),
 ]

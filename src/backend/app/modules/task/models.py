@@ -19,7 +19,6 @@ class TaskKind(StrEnum):
 class TaskStatus(StrEnum):
     queued = "queued"
     running = "running"
-    waiting_confirmation = "waiting_confirmation"
     succeeded = "succeeded"
     failed = "failed"
     cancelled = "cancelled"

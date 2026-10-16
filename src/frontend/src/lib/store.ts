@@ -1,13 +1,20 @@
 import { create } from "zustand";
+import { safeSessionStorage } from "./storage";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
-  defaults, originSchema, preferencesSnapshotSchema, type Origin, type PreferencesSnapshot,
+  defaults,
+  originSchema,
+  preferencesSnapshotSchema,
+  type Origin,
+  type PreferencesSnapshot,
 } from "./schemas";
 interface Draft {
+  ownerId: string | null;
   hasDraft: boolean;
   origin: Origin | null;
   preferences: PreferencesSnapshot;
   runId: string | null;
+  setOwnerId: (ownerId: string) => void;
   setOrigin: (origin: Origin | null) => void;
   setPreferences: (preferences: PreferencesSnapshot) => void;
   setRunId: (runId: string | null) => void;
@@ -15,11 +22,15 @@ interface Draft {
 }
 
 function recoverDraft(value: unknown) {
-  const stored = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const stored =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
   const preferences = preferencesSnapshotSchema.safeParse(stored.preferences);
   const origin = originSchema.safeParse(stored.origin);
   return {
-    hasDraft: stored.hasDraft === true,
+    ownerId: typeof stored.ownerId === "string" && stored.ownerId ? stored.ownerId : null,
+    hasDraft: stored.hasDraft === true && preferences.success,
     preferences: preferences.success ? preferences.data : defaults,
     origin: origin.success ? origin.data : null,
     runId: typeof stored.runId === "string" ? stored.runId : null,
@@ -28,23 +39,40 @@ function recoverDraft(value: unknown) {
 export const useDraft = create<Draft>()(
   persist(
     (set) => ({
+      ownerId: null,
       hasDraft: false,
       origin: null,
       preferences: defaults,
       runId: null,
+      setOwnerId: (ownerId) => set({ ownerId }),
       setOrigin: (origin) => set({ origin }),
-      setPreferences: (preferences) => set({
-        preferences: preferencesSnapshotSchema.parse(preferences), hasDraft: true,
-      }),
+      setPreferences: (preferences) =>
+        set({
+          preferences: preferencesSnapshotSchema.parse(preferences),
+          hasDraft: true,
+        }),
       setRunId: (runId) => set({ runId }),
-      reset: () => set({ hasDraft: false, origin: null, preferences: defaults, runId: null }),
+      reset: () =>
+        set({
+          ownerId: null,
+          hasDraft: false,
+          origin: null,
+          preferences: defaults,
+          runId: null,
+        }),
     }),
     {
       name: "food-draft-v1",
-      version: 2,
-      storage: createJSONStorage(() => sessionStorage),
-      partialize: ({ hasDraft, preferences, origin, runId }) => ({ hasDraft, preferences, origin, runId }),
-      migrate: (stored) => recoverDraft(stored),
+      version: 5,
+      storage: createJSONStorage(() => safeSessionStorage),
+      partialize: ({ ownerId, hasDraft, preferences, origin, runId }) => ({
+        ownerId,
+        hasDraft,
+        preferences,
+        origin,
+        runId,
+      }),
+      migrate: () => recoverDraft(null),
       merge: (stored, current) => ({ ...current, ...recoverDraft(stored) }),
     },
   ),

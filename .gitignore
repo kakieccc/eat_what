@@ -6,15 +6,21 @@ node_modules/
 dist/
 __pycache__/
 *.pyc
-.pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-playwright-report/
-test-results/
+.cache/
+.vite/
+.vite-temp/
 .DS_Store
 
 .pnpm-store/
 *.tsbuildinfo
 
 .vscode/
+
+.pytest_cache/
+.vitest/
+test-results/
+playwright-report/
+.playwright-mcp/
+coverage/

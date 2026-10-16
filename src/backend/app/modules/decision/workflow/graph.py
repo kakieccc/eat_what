@@ -12,12 +12,9 @@ from app.modules.decision.ports import FoodDecisionLlm
 from app.modules.decision.workflow.context import Emitter, StateSaver, StepStarted
 from app.modules.decision.workflow.events import NodeCompleted, NodeStarted
 from app.modules.decision.workflow.nodes import (
-    confirm_preferences,
     filter_places,
     generate_explanations,
-    parse_intent,
     rerank_places,
-    score_places,
     search_places,
     select_diverse,
 )
@@ -28,15 +25,11 @@ Graph = CompiledStateGraph[State, Any, State, State]
 
 
 def next_node(name: str, state: State) -> str:
-    if name == "confirm_intent":
-        return "confirm_intent" if state.get("awaiting_confirmation") else "search_places"
     if name == "filter_places" and not state.get("places"):
         return END
     transitions = {
-        "parse_intent": "confirm_intent",
         "search_places": "filter_places",
-        "filter_places": "score_places",
-        "score_places": "rerank_places",
+        "filter_places": "rerank_places",
         "rerank_places": "select_diverse",
         "select_diverse": "generate_explanations",
         "generate_explanations": END,
@@ -45,8 +38,6 @@ def next_node(name: str, state: State) -> str:
 
 
 def route(state: State) -> str:
-    if state.get("awaiting_confirmation"):
-        return END
     return state["next_node"]
 
 
@@ -84,11 +75,8 @@ def build_graph(
         return node
 
     definitions = [
-        ("parse_intent", "正在理解你的偏好", parse_intent.build(llm)),
-        ("confirm_intent", "正在确认条件", confirm_preferences.confirm),
         ("search_places", "正在搜索附近餐厅", search_places.build(places)),
-        ("filter_places", "正在筛选符合条件的地点", filter_places.filtering),
-        ("score_places", "正在比较候选", score_places.scoring),
+        ("filter_places", "正在筛选符合条件的地点", filter_places.build(places)),
         ("rerank_places", "正在结合偏好排序", rerank_places.build(llm)),
         ("select_diverse", "正在挑选不同选择", select_diverse.select),
         ("generate_explanations", "正在生成推荐理由", generate_explanations.build(places, llm)),

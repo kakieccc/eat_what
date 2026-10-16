@@ -7,18 +7,20 @@ import { FoodMap } from "../components/map";
 import { PlaceCard } from "../components/place-card";
 import { RadiusOptions } from "../components/radius-options";
 import { useDraft } from "../lib/store";
-import { request } from "../lib/api";
+import { ApiError, errorMessage, request } from "../lib/api";
+import { acceptRecommendation, isDiscardedRun, refreshCurrentRecommendation } from "../lib/recommendations";
 import { stream, subscribe } from "../lib/stream";
 import {
-  decisionRequestSchema, decisionRequestSnapshotSchema, isSearchRadius, runSchema,
-  type DecisionEvent, type Run, type Place, type SearchRadius,
+  isSearchRadius,
+  runSchema,
+  fromDecisionRequest,
+  type DecisionEvent,
+  type Run,
+  type Place,
+  type SearchRadius,
 } from "../lib/schemas";
 import { formatDistance } from "../lib/utils";
 
-function formatChange(field: string, value: unknown): string {
-  if (field === "radiusMeters" && typeof value === "number") return formatDistance(value);
-  return Array.isArray(value) ? value.join("、") || "不限" : String(value ?? "不限");
-}
 export function Discover() {
   const draft = useDraft(),
     client = useQueryClient(),
@@ -35,26 +37,43 @@ export function Discover() {
     [newRadius, setNewRadius] = useState<SearchRadius | undefined>(undefined),
     [newBudget, setNewBudget] = useState("60");
   const choiceKeys = useRef(new Map<string, string>());
+  const generation = useRef(0);
   const runQuery = useQuery({
     queryKey: ["run", draft.runId],
-    queryFn: () => request<Run>("/decision-runs/" + draft.runId, undefined, "GET", undefined, undefined, runSchema),
+    queryFn: ({ signal }) =>
+      request<Run>(
+        "/decision-runs/" + draft.runId,
+        undefined,
+        "GET",
+        undefined,
+        signal,
+        runSchema,
+      ),
     enabled: !!draft.runId && polling && !busy,
     refetchInterval: (q) =>
-      polling && q.state.data && ["pending", "running"].includes(q.state.data.status)
+      polling &&
+      q.state.data &&
+      ["pending", "running"].includes(q.state.data.status)
         ? 2000
         : false,
     retry: false,
   });
-  const run = runQuery.data;
-  const needsRadiusSelection = !!run && !isSearchRadius(run.request.radiusMeters);
+  const sessionId = runQuery.data?.discoverySessionId;
+  useEffect(() => {
+    if (runQuery.error instanceof ApiError && runQuery.error.code === "RUN_SUPERSEDED" && sessionId)
+      void refreshCurrentRecommendation(client, sessionId).catch(() => undefined);
+  }, [runQuery.error, sessionId, client]);
+  const run = runQuery.error || (draft.runId && isDiscardedRun(client, draft.runId)) ? undefined : runQuery.data;
+  const needsRadiusSelection =
+    !!run && !isSearchRadius(run.request.preferences.radiusMeters);
   const editRequest = (snapshot: Run["request"]) => {
-    draft.setPreferences(snapshot);
+    draft.setPreferences(fromDecisionRequest(snapshot));
     draft.setOrigin(snapshot.origin);
     draft.setRunId(null);
     navigate("/");
   };
   const process = (event: DecisionEvent) => {
-    if (event.type === "runStarted") draft.setRunId(event.decisionRunId);
+    if (event.type === "runStarted" && !isDiscardedRun(client, event.decisionRunId)) draft.setRunId(event.decisionRunId);
     if (event.type === "nodeStarted")
       setSteps((prev) => [
         ...prev.filter((s) => s.node !== event.node),
@@ -64,14 +83,20 @@ export function Discover() {
       setSteps((prev) =>
         prev.map((s) => (s.node === event.node ? { ...s, done: true } : s)),
       );
-    if (event.type === "result" || event.type === "confirmationRequired") {
+    if (event.type === "result") {
+      if (isDiscardedRun(client, event.data.decisionRunId)) return;
       setPolling(false);
+      void client.cancelQueries({ queryKey: ["run", event.data.decisionRunId] });
       client.setQueryData(["run", event.data.decisionRunId], event.data);
       setSelected(event.data.places?.[0]?.id ?? null);
     }
     if (event.type === "runFailed") {
       setPolling(false);
-      setError(event.error.message);
+      setError(errorMessage(event.error.code, event.error.message));
+      setPolling(true);
+      void client.invalidateQueries({ queryKey: ["run", draft.runId] });
+      if (event.error.code === "RUN_SUPERSEDED" && run)
+        void refreshCurrentRecommendation(client, run.discoverySessionId).catch(() => undefined);
     }
   };
   const launch = async (
@@ -79,18 +104,9 @@ export function Discover() {
     body: unknown,
     key: string = crypto.randomUUID(),
   ) => {
-    if (path === "/decision-runs") {
-      const parsed = decisionRequestSchema.safeParse(body);
-      if (!parsed.success) {
-        const snapshot = decisionRequestSnapshotSchema.safeParse(body);
-        if (snapshot.success) editRequest(snapshot.data);
-        else setError("请确认搜索范围、预算和出发位置后重新推荐");
-        return;
-      }
-      body = parsed.data;
-    }
+    const current = ++generation.current;
+    const previousId = draft.runId;
     abort.current?.abort();
-    if (path === "/decision-runs") draft.setRunId(null);
     const controller = new AbortController();
     abort.current = controller;
     setBusy(true);
@@ -99,30 +115,43 @@ export function Discover() {
     setSteps([]);
     setNewRadius(undefined);
     try {
-      await stream(path, body, key, controller.signal, process);
+      await stream(path, body, key, controller.signal, (event) => {
+        if (!controller.signal.aborted && generation.current === current) process(event);
+      }, (accepted) => {
+        if (controller.signal.aborted || generation.current !== current) return;
+        acceptRecommendation(client, accepted, previousId);
+        setSelected(null);
+        choiceKeys.current.clear();
+      });
     } catch (e) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && generation.current === current &&
+          !(e instanceof DOMException && e.name === "AbortError")) {
         setPolling(true);
         setError(e instanceof Error ? e.message : "推荐失败");
+        if (e instanceof ApiError && e.status === 409 && run)
+          await refreshCurrentRecommendation(client, run.discoverySessionId).catch(() => undefined);
       }
     } finally {
       if (abort.current === controller) setBusy(false);
     }
   };
-  const launchRef = useRef(launch);
-  launchRef.current = launch;
+  const processRef = useRef(process);
+  processRef.current = process;
   useEffect(() => {
-    const key = sessionStorage.getItem("food-start");
-    if (key && draft.origin) {
-      sessionStorage.removeItem("food-start");
-      void launchRef.current(
-        "/decision-runs",
-        { ...draft.preferences, origin: draft.origin },
-        key,
-      );
-    }
-    return () => abort.current?.abort();
-  }, [draft.origin, draft.preferences]);
+    if (!draft.runId || busy) return;
+    const current = ++generation.current;
+    const controller = new AbortController();
+    void subscribe(draft.runId, controller.signal, (event) => {
+      if (!controller.signal.aborted && generation.current === current)
+        processRef.current(event);
+    }).catch((e) => {
+      if (!controller.signal.aborted && generation.current === current &&
+          !(e instanceof DOMException && e.name === "AbortError"))
+        setError(e instanceof Error ? e.message : "进度读取失败");
+    });
+    return () => controller.abort();
+  }, [draft.runId, busy]);
+  useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
     if (!busy) return;
     const timer = setTimeout(
@@ -138,35 +167,8 @@ export function Discover() {
         value,
       });
   };
-  const resume = async (acceptChanges: boolean) => {
-    if (!run) return;
-    abort.current?.abort();
-    const controller = new AbortController();
-    abort.current = controller;
-    setBusy(true);
-    setError("");
-    try {
-      const data = await request<Run>(
-        `/decision-runs/${run.decisionRunId}`,
-        { acceptChanges },
-        "PATCH",
-        undefined,
-        controller.signal,
-        runSchema,
-      );
-      client.setQueryData(["run", run.decisionRunId], data);
-      await subscribe(run.decisionRunId, controller.signal, process);
-    } catch (e) {
-      if (!controller.signal.aborted) {
-        setPolling(true);
-        setError(e instanceof Error ? e.message : "恢复失败");
-      }
-    } finally {
-      if (abort.current === controller) setBusy(false);
-    }
-  };
   const choose = async (place: Place) => {
-    if (!place.candidateId || !run) return;
+    if (!place.candidateId || !run || busy || saving || run.status !== "completed") return;
     setSaving(true);
     try {
       let key = choiceKeys.current.get(place.candidateId);
@@ -176,17 +178,20 @@ export function Discover() {
       }
       await request(
         "/place-choices",
-        { candidateId: place.candidateId, feedback: "" },
+        { candidateId: place.candidateId },
         "POST",
         key,
       );
       await client.invalidateQueries({ queryKey: ["history"] });
-      await client.invalidateQueries({ queryKey: ["run", run.decisionRunId] });
+      choiceKeys.current.delete(place.candidateId);
+      await client.invalidateQueries({ queryKey: ["run"] });
       navigate(
         `/decision-runs/${run.decisionRunId}?place=${encodeURIComponent(place.id)}&chosen=1`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
+      if (e instanceof ApiError && [404, 409].includes(e.status))
+        await refreshCurrentRecommendation(client, run.discoverySessionId).catch(() => undefined);
     } finally {
       setSaving(false);
     }
@@ -204,8 +209,20 @@ export function Discover() {
         {run?.request.origin.address ||
           draft.origin?.address ||
           "尚未确认出发位置"}
-        {" · 搜索半径 "}{formatDistance(run?.request.radiusMeters ?? draft.preferences.radiusMeters)}
+        {" · 搜索半径 "}
+        {formatDistance(
+          run?.request.preferences.radiusMeters ??
+            draft.preferences.radiusMeters,
+        )}
       </p>
+      {run?.intent?.unhandledRequirements.map((item) => (
+        <p className="warning-text" key={item}>
+          尚无法核实：{item}
+        </p>
+      ))}
+      {run?.warnings.map((warning) => (
+        <p className="warning-text" role="status" key={warning}>{warning}</p>
+      ))}
       <FoodMap
         origin={run?.request.origin ?? draft.origin}
         places={run?.places ?? []}
@@ -240,11 +257,7 @@ export function Discover() {
               disabled={busy}
               onClick={() => {
                 if (draft.runId) void runQuery.refetch();
-                else if (draft.origin)
-                  void launch("/decision-runs", {
-                    ...draft.preferences,
-                    origin: draft.origin,
-                  });
+                else navigate("/");
               }}
             >
               {draft.runId ? "查询结果" : "重新推荐"}
@@ -252,55 +265,24 @@ export function Discover() {
           )}
         </div>
       )}
-      {run?.status === "awaitingConfirmation" && (
-        <section className="confirmation">
-          <h2>需要你确认条件</h2>
-          <p>这段话涉及硬约束变化。是否使用新条件？</p>
-          <div>
-            {Object.entries(
-              run.confirmation ?? {},
-            ).map(([field, change]) => (
-              <p key={field}>
-                <strong>
-                  {{
-                    radiusMeters: "搜索半径",
-                    budgetMax: "预算上限（元）",
-                    excludedCuisines: "不想吃的菜系",
-                  }[field] ?? "条件"}
-                </strong>
-                <br />
-                {formatChange(field, change.before)}{" "}
-                →{" "}
-                {formatChange(field, change.after)}
-              </p>
-            ))}
-          </div>
-          <div className="card-actions">
-            <Button
-              disabled={busy}
-              variant="outline"
-              onClick={() => resume(false)}
-            >
-              保留原条件
-            </Button>
-            <Button disabled={busy} onClick={() => resume(true)}>
-              使用新条件
-            </Button>
-          </div>
-        </section>
-      )}
       {run?.status === "failed" && (
         <div className="empty">
           <h2>这次还没有选好</h2>
-          <p>{run.errorCode}</p>
+          <p>{errorMessage(run.errorCode ?? "RUN_FAILED", "推荐未完成，请重试。")}</p>
           {run.errorCode === "UNSUPPORTED_RADIUS" && (
-            <p>请将补充说明中的距离改为 500 米、1 km、2 km 或 5 km。</p>
+            <p>请选择 500 米、1 km、2 km 或 5 km 的搜索半径。</p>
           )}
-          <Button onClick={() => {
-            if (needsRadiusSelection || run.errorCode === "UNSUPPORTED_RADIUS") editRequest(run.request);
-            else void launch("/decision-runs", run.request);
-          }}>
-            {needsRadiusSelection || run.errorCode === "UNSUPPORTED_RADIUS" ? "修改搜索范围" : "重新推荐"}
+          <Button disabled={busy} onClick={() => void launch(`/decision-runs/${run.decisionRunId}/retry`, {})}>
+            按当前条件重试
+          </Button>
+          <Button
+            onClick={() => {
+              editRequest(run.request);
+            }}
+          >
+            {needsRadiusSelection || run.errorCode === "UNSUPPORTED_RADIUS"
+              ? "修改搜索范围"
+              : "重新推荐"}
           </Button>
         </div>
       )}
@@ -315,7 +297,7 @@ export function Discover() {
               ["refresh", "换一批"],
             ].map(([action, label]) => (
               <button
-                disabled={working || needsRadiusSelection}
+                disabled={working || saving || needsRadiusSelection}
                 key={action}
                 onClick={() => refine(action)}
               >
@@ -325,25 +307,35 @@ export function Discover() {
           </div>
           {needsRadiusSelection && (
             <p className="warning-text" role="alert">
-              旧记录的搜索半径为 {formatDistance(run.request.radiusMeters)}，请先选择有效范围再调整推荐。
+              旧记录的搜索半径为{" "}
+              {formatDistance(run.request.preferences.radiusMeters)}
+              ，请先选择有效范围再调整推荐。
             </p>
           )}
-          <details className="hard-constraints" open={needsRadiusSelection || undefined}>
+          <details
+            className="hard-constraints"
+            open={needsRadiusSelection || undefined}
+          >
             <summary>调整预算或搜索范围</summary>
             <fieldset>
               <legend>新的搜索半径</legend>
               <RadiusOptions
-                value={newRadius ?? (isSearchRadius(run.request.radiusMeters) ? run.request.radiusMeters : undefined)}
+                value={
+                  newRadius ??
+                  (isSearchRadius(run.request.preferences.radiusMeters)
+                    ? run.request.preferences.radiusMeters
+                    : undefined)
+                }
                 onChange={setNewRadius}
-                disabled={working}
+                disabled={working || saving}
               />
             </fieldset>
             <Button
               variant="outline"
               disabled={
-                working ||
-                newRadius === undefined ||
-                newRadius === run.request.radiusMeters
+                working || saving ||
+                !isSearchRadius(newRadius) ||
+                newRadius === run.request.preferences.radiusMeters
               }
               onClick={() => refine("changeRadius", newRadius)}
             >
@@ -362,15 +354,19 @@ export function Discover() {
             <Button
               variant="outline"
               disabled={
-                working ||
+                working || saving ||
                 needsRadiusSelection ||
                 newBudget === "" ||
                 !Number.isFinite(Number(newBudget)) ||
-                Number(newBudget) < 0 ||
+                Number(newBudget) <
+                  Number(run.request.preferences.budgetPerPerson.min ?? 0) ||
                 Number(newBudget) > 10000
               }
               onClick={() =>
-                refine("changeBudget", { min: null, max: newBudget })
+                refine("changeBudget", {
+                  min: run.request.preferences.budgetPerPerson.min,
+                  max: newBudget,
+                })
               }
             >
               确认修改预算
@@ -380,11 +376,7 @@ export function Discover() {
             <section className="empty">
               <h2>附近暂时没有合适的选择</h2>
               <p>我们保留了你的条件，没有自动放宽。</p>
-              <p>
-                {Object.entries(run.filterSummary ?? {})
-                  .map(([key, value]) => `${key}: ${value}`)
-                  .join(" · ")}
-              </p>
+              <p>{run.suggestions.join(" ")}</p>
               <Link to="/">调整预算或搜索范围</Link>
             </section>
           )}
@@ -394,9 +386,14 @@ export function Discover() {
                 <PlaceCard
                   place={place}
                   selected={selected === place.id}
+                  chosen={run.choice?.candidateId === place.candidateId}
                   onSelect={() => setSelected(place.id)}
                   onChoose={() => choose(place)}
-                  onExclude={needsRadiusSelection ? undefined : () => refine("excludePlace", place.id)}
+                  onExclude={
+                    needsRadiusSelection
+                      ? undefined
+                      : () => refine("excludePlace", place.id)
+                  }
                   busy={saving || working}
                 />
               </div>

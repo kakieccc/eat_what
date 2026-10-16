@@ -32,6 +32,7 @@ const History = lazy(() =>
 const Detail = lazy(() =>
   import("./pages/history").then((m) => ({ default: m.Detail })),
 );
+import { watchRecommendations } from "./lib/recommendations";
 import { configError } from "./lib/api";
 import "./styles.css";
 const client = new QueryClient({
@@ -49,6 +50,7 @@ function RequireAuth() {
 function App() {
   const { pathname } = useLocation();
   const auth = useAuth();
+  useEffect(() => watchRecommendations(client), []);
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);

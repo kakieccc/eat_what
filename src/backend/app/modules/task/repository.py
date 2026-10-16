@@ -142,9 +142,11 @@ class TaskStore:
     async def append_event(self, task_id: str, event: BaseModel | dict[str, Any]) -> None:
         payload = json_payload(event)
         async with self.sessions.begin() as session:
-            task = await session.scalar(select(Task.id).where(Task.id == task_id).with_for_update())
+            task = await session.scalar(select(Task).where(Task.id == task_id).with_for_update())
             if task is None:
                 raise LookupError(f"Task not found: {task_id}")
+            if task.status == TaskStatus.superseded.value:
+                return
             sequence = await session.scalar(
                 select(func.max(TaskEvent.sequence)).where(TaskEvent.task_id == task_id)
             )

@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -25,20 +26,12 @@ class DiscoverySession(IdentityMixin, Base):
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
 
-    origin_latitude: Mapped[float] = mapped_column(nullable=False)
-    origin_longitude: Mapped[float] = mapped_column(nullable=False)
-    origin_address: Mapped[str] = mapped_column(String(200), default="")
-    budget_per_person_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    budget_per_person_max: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    radius_meters: Mapped[int] = mapped_column(Integer, nullable=False)
-    preferred_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    excluded_cuisines: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    desired_tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    meal_period: Mapped[str] = mapped_column(String(32), nullable=False)
-    party_size: Mapped[int] = mapped_column(Integer, nullable=False)
-    open_now_preferred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    request_text: Mapped[str] = mapped_column(String(300), default="")
-    normalized_preferences: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    current_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("decision_runs.id", name="fk_discovery_current_run", use_alter=True, ondelete="SET NULL")
+    )
+    seen_place_keys: Mapped[list[str]] = mapped_column(JSONB, default=list)
+
+    request_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
 
 
 class DecisionRun(IdentityMixin, Base):
@@ -52,6 +45,8 @@ class DecisionRun(IdentityMixin, Base):
     prompt_version: Mapped[str] = mapped_column(String(32), default=PROMPT_VERSION)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     refinement_action: Mapped[str] = mapped_column(String(64), default="")
+    original_request: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
+    intent: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
     effective_preferences: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
     filter_summary: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
     excluded_place_keys: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -62,17 +57,6 @@ class DecisionRun(IdentityMixin, Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class DecisionConfirmation(IdentityMixin, Base):
-    __tablename__ = "decision_confirmations"
-
-    decision_run_id: Mapped[str] = mapped_column(
-        ForeignKey("decision_runs.id"), unique=True, nullable=False
-    )
-    changes: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
-    status: Mapped[str] = mapped_column(String(32), default="pending")
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PlaceCandidate(IdentityMixin, Base):
@@ -94,14 +78,13 @@ class PlaceCandidate(IdentityMixin, Base):
     straight_line_distance_meters: Mapped[int] = mapped_column(Integer, nullable=False)
     rating: Mapped[float | None]
     average_cost: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
-    business_status: Mapped[str] = mapped_column(String(16), default="unknown")
     opening_hours_text: Mapped[str | None] = mapped_column(String(200))
     phone: Mapped[str | None] = mapped_column(String(80))
     photos: Mapped[list[str]] = mapped_column(JSONB, default=list)
     score: Mapped[float] = mapped_column(default=0)
     score_breakdown: Mapped[dict[str, float]] = mapped_column(JSONB, default=dict)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
-    reason: Mapped[str] = mapped_column(String(600), default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
     warnings: Mapped[list[str]] = mapped_column(JSONB, default=list)
     navigation_url: Mapped[str | None] = mapped_column(String(1000))
     place_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)

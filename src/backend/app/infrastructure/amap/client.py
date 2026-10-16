@@ -1,10 +1,7 @@
 import asyncio
 import json
 import logging
-import math
 import random
-from datetime import UTC
-from email.utils import parsedate_to_datetime
 from typing import cast
 
 import httpx
@@ -39,23 +36,6 @@ RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 
 def unavailable(retryable: bool = True) -> AppError:
     return AppError("AMAP_UNAVAILABLE", "地图服务暂时不可用", 502, retryable)
-
-
-def retry_after(value: str | None) -> float:
-    if not value:
-        return 0
-    try:
-        seconds = float(value)
-    except ValueError:
-        try:
-            date = parsedate_to_datetime(value)
-            if date.tzinfo is None:
-                date = date.replace(tzinfo=UTC)
-            seconds = (date - now()).total_seconds()
-        except (ValueError, TypeError, OverflowError):
-            return 0
-    return max(0, seconds) if math.isfinite(seconds) else 0
-
 
 class AmapClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
@@ -93,7 +73,6 @@ class AmapClient:
                 for attempt in range(1, 4):
                     started = loop.time()
                     retryable = True
-                    delay = 0.0
                     try:
                         async with self.semaphore:
                             await self._wait_for_slot(operation)
@@ -141,8 +120,7 @@ class AmapClient:
                         # The minute limit cannot be resolved by short in-call retries.
                         if not retryable or code == "10004":
                             raise unavailable(retryable) from None
-                        delay = retry_after(response.headers.get("Retry-After"))
-                    delay = max(delay, 0.2 * 2 ** (attempt - 1) + random.uniform(0, 0.1))
+                    delay = 0.2 * 2 ** (attempt - 1) + random.uniform(0, 0.1)
                     if attempt == 3 or delay >= until - loop.time():
                         raise unavailable(retryable) from None
                     await asyncio.sleep(delay)

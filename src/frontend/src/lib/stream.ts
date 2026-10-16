@@ -1,8 +1,8 @@
-import { endpoint, getCsrfToken, handleUnauthorized } from "./api";
-import { eventSchema, type DecisionEvent } from "./schemas";
+import { ApiError, endpoint, getCsrfToken, handleUnauthorized, errorMessage, getSessionVersion, requireCurrentSession } from "./api";
+import { runSchema, eventSchema, type DecisionEvent, type Run } from "./schemas";
 export class SseParser {
   private pending = "";
-  constructor(private readonly onEvent: (event: DecisionEvent) => void) {}
+  constructor(private readonly onEvent: (event: DecisionEvent) => void | boolean) {}
   push(chunk: string) {
     this.pending += chunk;
     this.consume();
@@ -17,8 +17,10 @@ export class SseParser {
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice(5).replace(/^ /, ""))
         .join("\n");
-      if (data)
-        this.onEvent(eventSchema.parse(JSON.parse(data)) as DecisionEvent);
+      if (data && this.onEvent(eventSchema.parse(JSON.parse(data)) as DecisionEvent) === false) {
+        this.pending = "";
+        return;
+      }
     }
   }
   finish() {
@@ -32,7 +34,9 @@ export async function stream(
   key: string,
   signal: AbortSignal,
   onEvent: (event: DecisionEvent) => void,
+  onAccepted?: (run: Run) => void,
 ) {
+  const version = getSessionVersion();
   const creation = await fetch(endpoint(collectionPath), {
     method: "POST",
     signal,
@@ -47,14 +51,15 @@ export async function stream(
     body: JSON.stringify(body),
   });
   const payload = await creation.json();
+  requireCurrentSession(version, signal);
   if (!creation.ok || !payload.success) {
     if (creation.status === 401 && payload.error?.code === "AUTH_REQUIRED")
       handleUnauthorized();
-    const error = payload;
-    throw new Error(error.error?.message ?? "推荐请求失败");
+    throw new ApiError(errorMessage(payload.error?.code, payload.error?.message), creation.status, payload.error?.code);
   }
   const runId = payload.data?.decisionRunId;
   if (typeof runId !== "string") throw new Error("服务未返回决策记录");
+  if (onAccepted) onAccepted(runSchema.parse(payload.data));
   onEvent({
     type: "runStarted",
     requestId: creation.headers.get("X-Request-ID") ?? "",
@@ -69,6 +74,7 @@ export async function subscribe(
   signal: AbortSignal,
   onEvent: (event: DecisionEvent) => void,
 ) {
+  const version = getSessionVersion();
   const response = await fetch(endpoint(`/decision-runs/${runId}/events`), {
     method: "GET",
     signal,
@@ -80,29 +86,39 @@ export async function subscribe(
   });
   if (!response.ok) {
     const error = await response.json();
+    requireCurrentSession(version, signal);
     if (response.status === 401 && error.error?.code === "AUTH_REQUIRED")
       handleUnauthorized();
-    throw new Error(error.error?.message ?? "推荐进度读取失败");
+    throw new ApiError(errorMessage(error.error?.code, error.error?.message), response.status, error.error?.code);
   }
   if (!response.body) throw new Error("浏览器不支持流式响应");
   const reader = response.body.getReader(),
     decoder = new TextDecoder();
   let terminal = false;
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  signal.addEventListener("abort", cancel, { once: true });
   const parser = new SseParser((e) => {
-    if (["result", "runFailed", "confirmationRequired"].includes(e.type))
-      terminal = true;
+    requireCurrentSession(version, signal);
+    if (terminal) return false;
+    if (["result", "runFailed"].includes(e.type)) terminal = true;
     onEvent(e);
+    return !terminal;
   });
   try {
     while (true) {
+      requireCurrentSession(version, signal);
       const { done, value } = await reader.read();
+      requireCurrentSession(version, signal);
       if (done) break;
       parser.push(decoder.decode(value, { stream: true }));
+      if (terminal) return;
     }
     parser.push(decoder.decode());
     parser.finish();
     if (!terminal) throw new Error("连接已断开，可以恢复查询结果");
   } finally {
+    signal.removeEventListener("abort", cancel);
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

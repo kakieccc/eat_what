@@ -47,37 +47,74 @@ export const preferencesSnapshotSchema = z
           Number(b.min) <= Number(b.max),
         "预算下限不能高于上限",
       ),
-    radiusMeters: z.number().int().min(100).max(50000),
-    preferredCuisines: z.array(z.string()),
-    excludedCuisines: z.array(z.string()),
-    desiredTags: z.array(z.string()).max(5),
+    radiusMeters: z.custom<SearchRadius>(
+      isSearchRadius,
+      "请选择 500 米、1 km、2 km 或 5 km 的搜索半径",
+    ),
+    allowedFoods: z.array(z.string().trim().min(1).max(30)).max(12),
+    preferredFoods: z.array(z.string().trim().min(1).max(30)).max(12),
+    excludedFoods: z.array(z.string().trim().min(1).max(30)).max(12),
+    softPreferences: z.array(z.string().trim().min(1).max(30)).max(5),
     mealPeriod: z.enum(["breakfast", "lunch", "dinner", "lateNight"]),
     partySize: z.number().int().min(1).max(20),
-    openNowPreferred: z.boolean(),
     requestText: z.string().max(300),
   })
   .refine(
-    (p) => !p.preferredCuisines.some((c) => p.excludedCuisines.includes(c)),
-    "喜欢和排除的菜系不能重叠",
+    (p) =>
+      ![...p.preferredFoods, ...p.allowedFoods].some((c) =>
+        p.excludedFoods.includes(c),
+      ),
+    { message: "偏好或限定的食物不能同时被排除", path: ["excludedFoods"] },
   );
 export type PreferencesSnapshot = z.infer<typeof preferencesSnapshotSchema>;
-export const preferencesSchema = preferencesSnapshotSchema.safeExtend({
-  radiusMeters: z.literal(radiusValues, "请选择 500 米、1 km、2 km 或 5 km"),
-});
+export const preferencesSchema = preferencesSnapshotSchema;
 export type Preferences = z.infer<typeof preferencesSchema>;
-export const decisionRequestSnapshotSchema = preferencesSnapshotSchema.safeExtend({
-  origin: originSchema,
+export const storedPreferencesSchema = z.object(preferencesSchema.shape).pick({
+  budgetPerPerson: true,
+  radiusMeters: true,
+  preferredFoods: true,
+  allowedFoods: true,
+  excludedFoods: true,
+  softPreferences: true,
 });
-export const decisionRequestSchema = preferencesSchema.safeExtend({ origin: originSchema });
+export const decisionRequestSchema = z.object({
+  origin: originSchema,
+  preferences: storedPreferencesSchema,
+  mealPeriod: z.enum(["breakfast", "lunch", "dinner", "lateNight"]),
+  partySize: z.number().int().min(1).max(20),
+  requestText: z.string().max(300),
+});
+export const decisionRequestSnapshotSchema = decisionRequestSchema;
+export type DecisionRequest = z.infer<typeof decisionRequestSchema>;
+export function toDecisionRequest(
+  p: Preferences,
+  origin: Origin,
+): DecisionRequest {
+  return {
+    origin,
+    preferences: storedPreferencesSchema.parse(p),
+    mealPeriod: p.mealPeriod,
+    partySize: p.partySize,
+    requestText: p.requestText,
+  };
+}
+export function fromDecisionRequest(r: DecisionRequest): Preferences {
+  return {
+    ...r.preferences,
+    mealPeriod: r.mealPeriod,
+    partySize: r.partySize,
+    requestText: r.requestText,
+  };
+}
 export const defaults: Preferences = {
   budgetPerPerson: { min: "20", max: "60" },
   radiusMeters: 2000,
-  preferredCuisines: [],
-  excludedCuisines: [],
-  desiredTags: [],
+  preferredFoods: [],
+  allowedFoods: [],
+  excludedFoods: [],
+  softPreferences: [],
   mealPeriod: "lunch",
   partySize: 1,
-  openNowPreferred: true,
   requestText: "",
 };
 export const placeSchema = z.object({
@@ -93,7 +130,6 @@ export const placeSchema = z.object({
   straightLineDistanceMeters: z.number().nonnegative(),
   rating: z.number().nullable(),
   averageCost: z.union([z.number(), z.string()]).nullable(),
-  businessStatus: z.enum(["open", "closed", "unknown"]),
   openingHoursText: z.string().nullable(),
   phone: z.string().nullable(),
   photos: z.array(z.string()),
@@ -107,28 +143,34 @@ export const placeSchema = z.object({
   rank: z.number().int(),
 });
 export type Place = z.infer<typeof placeSchema>;
-const confirmationChangeSchema = z.object({
-  before: z.unknown(),
-  after: z.unknown(),
+export const choiceSchema = z.object({
+  id: z.string(),
+  candidateId: z.string(),
+  decisionRunId: z.string(),
+  selectedAt: z.string(),
 });
 export const runSchema = z
   .object({
     decisionRunId: z.string(),
     discoverySessionId: z.string(),
-    status: z.enum([
-      "pending",
-      "running",
-      "awaitingConfirmation",
-      "completed",
-      "failed",
-    ]),
+    status: z.enum(["pending", "running", "completed", "failed"]),
     places: z.array(placeSchema),
     request: decisionRequestSnapshotSchema,
-    confirmation: z.record(z.string(), confirmationChangeSchema).nullable(),
+    originalRequest: decisionRequestSchema.nullable(),
+    intent: z
+      .object({
+        effectiveRequest: decisionRequestSchema,
+        searchKeywords: z.array(z.string()),
+        unhandledRequirements: z.array(z.string()),
+        excludedIngredients: z.array(z.string()).default([]),
+        allergies: z.array(z.string()).default([]),
+      })
+      .nullable(),
     filterSummary: z.record(z.string(), z.number()),
     suggestions: z.array(z.string()),
+    warnings: z.array(z.string()).default([]),
     errorCode: z.string().nullable(),
-    chosenCandidateIds: z.array(z.string()),
+    choice: choiceSchema.nullable(),
   })
   .passthrough();
 export type Run = z.infer<typeof runSchema>;
@@ -150,7 +192,6 @@ export const eventSchema = z.discriminatedUnion("type", [
     outputCount: z.number().nullable().optional(),
   }),
   z.object({ type: z.literal("result"), data: runSchema }),
-  z.object({ type: z.literal("confirmationRequired"), data: runSchema }),
   z.object({
     type: z.literal("runFailed"),
     error: z.object({

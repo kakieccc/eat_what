@@ -19,12 +19,13 @@ class PreferencesRepository:
 
     async def save(self, user_id: str, preferences: Preferences) -> Preferences:
         values = {
-            "preferred_cuisines": preferences.preferred_cuisines,
-            "excluded_cuisines": preferences.excluded_cuisines,
+            "allowed_foods": preferences.allowed_foods,
+            "preferred_foods": preferences.preferred_foods,
+            "excluded_foods": preferences.excluded_foods,
             "typical_budget_per_person_min": preferences.budget_per_person.min,
             "typical_budget_per_person_max": preferences.budget_per_person.max,
             "typical_radius_meters": preferences.radius_meters,
-            "preferred_tags": preferences.desired_tags,
+            "preferred_tags": preferences.soft_preferences,
         }
         async with self.sessions.begin() as session:
             row = await session.scalar(

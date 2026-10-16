@@ -2,15 +2,26 @@
 name = "today-food-api"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30", "pydantic>=2.10,<3", "pydantic-settings>=2.6", "sqlalchemy[asyncio]>=2.0,<3", "asyncpg>=0.30", "httpx>=0.28", "langgraph>=1,<2", "langchain>=1,<2", "langchain-openai>=1,<2", "pwdlib[argon2]>=0.2"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.30",
+    "httpx>=0.28",
+    "langgraph>=1,<2",
+    "langchain>=1,<2",
+    "langchain-openai>=1,<2",
+    "pwdlib[argon2]>=0.2",
+    "alembic>=1.16,<2",
+]
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "pytest-cov>=6", "ruff>=0.9", "mypy>=1.14"]
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-pythonpath = ["."]
-markers = [
-    "live: requires real upstream keys and dedicated PostgreSQL",
-    "database: requires an isolated PostgreSQL TEST_DATABASE_URL",
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "pytest>=8,<10",
+    "pytest-asyncio>=1,<2",
 ]
 [tool.ruff]
 target-version = "py312"
@@ -22,3 +33,13 @@ ignore = ["E501", "B008"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers -m 'not integration and not live'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: uses the isolated PostgreSQL test database",
+    "live: calls real Amap and LLM services explicitly",
+]

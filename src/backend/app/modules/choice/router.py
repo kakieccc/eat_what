@@ -10,7 +10,7 @@ from app.modules.choice.schemas import PlaceChoiceRequest
 router = APIRouter(prefix="/place-choices", tags=["place-choices"])
 
 
-@router.post("", status_code=201, responses=error_responses(401, 403, 404, 409, 422, 503))
+@router.post("", status_code=200, responses=error_responses(401, 403, 404, 409, 422, 503))
 async def create_place_choice(
     body: PlaceChoiceRequest,
     choices: ChoiceServiceDependency,
@@ -19,8 +19,7 @@ async def create_place_choice(
 ) -> Envelope[dict[str, str]]:
     result = await choices.choose(
         user.user.id,
-        body.candidate_id,
-        body.feedback,
+        str(body.candidate_id),
         idempotency_key,
     )
     return Envelope(data=result)

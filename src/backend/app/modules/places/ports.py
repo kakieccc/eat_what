@@ -19,6 +19,7 @@ class GeoPlaceProvider(Protocol):
         keywords: str = "",
         *,
         deadline: float | None = None,
+        page: int = 1,
     ) -> list[Place]: ...
     async def detail(
         self, external_id: str, origin: Point, *, deadline: float | None = None

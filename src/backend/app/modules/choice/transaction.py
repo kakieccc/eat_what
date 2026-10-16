@@ -37,27 +37,41 @@ class ChoiceTransaction:
         run = await self.session.get(DecisionRun, candidate.decision_run_id)
         if run is None:
             raise AppError("NOT_FOUND", "决策不存在", 404)
-        discovery = await self.session.get(DiscoverySession, run.discovery_session_id)
+        discovery = await self.session.scalar(
+            select(DiscoverySession)
+            .where(
+                DiscoverySession.id == run.discovery_session_id,
+                DiscoverySession.user_id == self.user_id,
+            )
+            .with_for_update()
+        )
         if discovery is None or discovery.user_id != self.user_id:
             raise AppError("NOT_FOUND", "候选不存在", 404)
+        if discovery.current_run_id != run.id:
+            raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
         return CandidateSnapshot(candidate.id, run.discovery_session_id, run.status)
 
-    async def create_choice(
-        self, candidate: CandidateSnapshot, feedback: str
-    ) -> str:
+    async def create_choice(self, candidate: CandidateSnapshot) -> str:
+        choice = await self.session.scalar(
+            select(PlaceChoice)
+            .where(PlaceChoice.discovery_session_id == candidate.discovery_session_id)
+            .with_for_update()
+        )
+        if choice is not None:
+            if choice.place_candidate_id != candidate.id:
+                choice.place_candidate_id = candidate.id
+                choice.selected_at = now()
+            return choice.id
         choice = PlaceChoice(
             user_id=self.user_id,
             discovery_session_id=candidate.discovery_session_id,
             place_candidate_id=candidate.id,
-            feedback=feedback,
         )
         self.session.add(choice)
         await self.session.flush()
         return choice.id
 
-    async def record_idempotency(
-        self, key: str, digest: str, result: dict[str, str]
-    ) -> None:
+    async def record_idempotency(self, key: str, digest: str, result: dict[str, str]) -> None:
         self.session.add(
             IdempotencyRecord(
                 user_id=self.user_id,

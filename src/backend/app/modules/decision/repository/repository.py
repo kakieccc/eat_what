@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
 
-from pydantic import TypeAdapter
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -12,15 +11,15 @@ from app.core.clock import now
 from app.core.errors import AppError
 from app.core.ids import lock_id, uid
 from app.modules.choice.models import PlaceChoice
+from app.modules.choice.schemas import ChoiceSnapshot
 from app.modules.decision.models import (
-    DecisionConfirmation,
     DecisionRun,
     DiscoverySession,
     PlaceCandidate,
 )
 from app.modules.decision.repository.mappers import place_from_candidate, request_for_run
 from app.modules.decision.repository.transaction import DecisionTransaction
-from app.modules.decision.schemas import ConfirmationChange, DecisionRunResponse
+from app.modules.decision.schemas import DecisionIntent, DecisionRequest, DecisionRunResponse
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.task.errors import LostTaskLease
@@ -51,11 +50,16 @@ class DecisionRepository:
         return await self._read(run_id, user_id)
 
     async def _read(self, run_id: str, user_id: str | None = None) -> DecisionRunResponse:
-        async with self.sessions() as session:
+        async with self.sessions.begin() as session:
             run = await self._run(session, run_id)
-            discovery = await session.get(DiscoverySession, run.discovery_session_id)
+            discovery = await session.scalar(
+                select(DiscoverySession).where(DiscoverySession.id == run.discovery_session_id)
+                .with_for_update(read=True)
+            )
             if discovery is None or (user_id is not None and discovery.user_id != user_id):
                 raise AppError("NOT_FOUND", "发现会话不存在", 404)
+            if discovery.current_run_id != run_id:
+                raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
             candidates = list(
                 (
                     await session.scalars(
@@ -65,56 +69,49 @@ class DecisionRepository:
                     )
                 ).all()
             )
-            confirmation = await session.scalar(
-                select(DecisionConfirmation).where(
-                    DecisionConfirmation.decision_run_id == run.id,
-                    DecisionConfirmation.status == "pending",
+            chosen = await session.scalar(
+                select(PlaceChoice).where(
+                    PlaceChoice.discovery_session_id == run.discovery_session_id
                 )
             )
-            chosen = list(
-                (
-                    await session.scalars(
-                        select(PlaceChoice.place_candidate_id).where(
-                            PlaceChoice.discovery_session_id == run.discovery_session_id
-                        )
-                    )
-                ).all()
-            )
-            task = await session.scalar(
-                select(Task)
-                .where(Task.decision_run_id == run.id)
-                .order_by(Task.created_at.desc(), Task.id.desc())
-            )
-            status = (
-                "awaitingConfirmation"
-                if confirmation or (task and task.status == TaskStatus.waiting_confirmation.value)
-                else run.status
+            selected_candidate = (
+                await session.get(PlaceCandidate, chosen.place_candidate_id) if chosen else None
             )
             return DecisionRunResponse(
                 decision_run_id=run.id,
                 discovery_session_id=run.discovery_session_id,
-                status=status,
+                status=run.status,
                 request=request_for_run(run, discovery),
                 places=[place_from_candidate(candidate) for candidate in candidates],
-                confirmation=TypeAdapter(dict[str, ConfirmationChange]).validate_python(
-                    confirmation.changes
-                ) if confirmation else None,
-                filter_summary={
-                    key: count
-                    for key, count in run.filter_summary.items()
-                    if key in {"excludedPlace", "radius", "cuisine", "closed", "budget"}
-                },
-                chosen_candidate_ids=list(chosen),
+                intent=DecisionIntent.model_validate(run.intent) if run.intent else None,
+                original_request=DecisionRequest.model_validate(run.original_request)
+                if run.original_request
+                else None,
+                filter_summary={key: count for key, count in run.filter_summary.items()},
+                warnings=["部分搜索或详情暂不可用，推荐信息不完整。"]
+                if any(run.filter_summary.get(key, 0) for key in ("searchFailures", "detailFailures"))
+                else [],
+                choice=ChoiceSnapshot(
+                    id=chosen.id,
+                    candidate_id=chosen.place_candidate_id,
+                    decision_run_id=selected_candidate.decision_run_id,
+                    selected_at=chosen.selected_at,
+                )
+                if chosen and selected_candidate
+                else None,
                 suggestions=[]
-                if candidates
-                else ["可以调整预算、搜索范围或排除菜系后重新选择；系统不会自动放宽条件。"],
+                if candidates or run.status != "completed"
+                else (
+                    ["本次检索达到查询上限，尚未找到合适餐厅。"]
+                    if run.filter_summary.get("searchBudgetExhausted")
+                    else ["当前范围和条件下暂未找到合适餐厅。"]
+                )
+                + ["可以修改预算、范围或食物条件后重试。"],
                 error_code=run.error_code,
             )
 
     @asynccontextmanager
-    async def transaction(
-        self, user_id: str, lock_key: str
-    ) -> AsyncIterator[DecisionTransaction]:
+    async def transaction(self, user_id: str, lock_key: str) -> AsyncIterator[DecisionTransaction]:
         async with self.sessions.begin() as session:
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
@@ -143,7 +140,19 @@ class DecisionRepository:
             task.phase = task.phase or "running"
             return task.id, run.id, task.request_id, state, run.duration_ms
 
+    async def _current_session(self, session: AsyncSession, claim: TaskClaim) -> DiscoverySession:
+        task = await session.get(Task, claim.task_id)
+        run = await session.get(DecisionRun, task.decision_run_id) if task else None
+        discovery = await session.scalar(
+            select(DiscoverySession).where(DiscoverySession.id == run.discovery_session_id)
+            .with_for_update()
+        ) if run else None
+        if discovery is None or run is None or discovery.current_run_id != run.id:
+            raise LostTaskLease("任务已被替代")
+        return cast(DiscoverySession, discovery)
+
     async def _owned(self, session: AsyncSession, claim: TaskClaim) -> Task:
+        await self._current_session(session, claim)
         task = await session.scalar(
             select(Task)
             .where(
@@ -151,38 +160,11 @@ class DecisionRepository:
                 Task.lease_token == claim.lease_token,
                 Task.status == TaskStatus.running.value,
             )
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         if task is None:
             raise LostTaskLease("任务执行权已失效")
         return task
-
-    async def wait_for_confirmation(self, claim: TaskClaim, state: State, duration_ms: int) -> None:
-        async with self.sessions.begin() as session:
-            task = await self._owned(session, claim)
-            run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
-            if run is None:
-                raise AppError("NOT_FOUND", "决策记录不存在", 404)
-            confirmation = await session.scalar(
-                select(DecisionConfirmation)
-                .where(DecisionConfirmation.decision_run_id == run.id)
-                .with_for_update()
-            )
-            changes = dict(state.get("changes", {}))
-            if confirmation is None:
-                session.add(
-                    DecisionConfirmation(decision_run_id=run.id, changes=changes, status="pending")
-                )
-            else:
-                confirmation.changes = changes
-                confirmation.status = "pending"
-                confirmation.resolved_at = None
-            task.state = {key: value for key, value in state.items() if key != "lease_token"}
-            task.status = TaskStatus.waiting_confirmation.value
-            task.phase = "waiting_confirmation"
-            task.lease_token = None
-            task.lease_until = None
-            run.duration_ms += duration_ms
 
     async def complete(self, claim: TaskClaim, state: State, run_id: str, duration_ms: int) -> None:
         async with self.sessions.begin() as session:
@@ -190,6 +172,12 @@ class DecisionRepository:
             run = await session.get(DecisionRun, run_id, with_for_update=True)
             if run is None:
                 raise AppError("NOT_FOUND", "决策记录不存在", 404)
+            discovery = await session.get(DiscoverySession, run.discovery_session_id)
+            assert discovery is not None
+            discovery.seen_place_keys = list(dict.fromkeys([
+                *discovery.seen_place_keys,
+                *(Place.model_validate(raw).id for raw in state.get("places", [])),
+            ]))
             self._persist_result(session, run, state)
             task.state = {key: value for key, value in state.items() if key != "lease_token"}
             task.status = TaskStatus.succeeded.value
@@ -203,6 +191,10 @@ class DecisionRepository:
 
     async def fail(self, claim: TaskClaim, code: str, message: str) -> bool:
         async with self.sessions.begin() as session:
+            try:
+                await self._current_session(session, claim)
+            except LostTaskLease:
+                return False
             task = await session.scalar(
                 select(Task)
                 .where(Task.id == claim.task_id, Task.lease_token == claim.lease_token)
@@ -238,41 +230,41 @@ class DecisionRepository:
             return False
 
     def _persist_result(self, session: AsyncSession, run: DecisionRun, state: State) -> None:
-            for rank, raw in enumerate(state.get("places", []), 1):
-                place = Place.model_validate(raw).model_copy(
-                    update={"candidate_id": uid(), "rank": rank}
+        for rank, raw in enumerate(state.get("places", []), 1):
+            place = Place.model_validate(raw).model_copy(
+                update={"candidate_id": uid(), "rank": rank}
+            )
+            session.add(
+                PlaceCandidate(
+                    id=place.candidate_id,
+                    decision_run_id=run.id,
+                    place_key=place.id,
+                    external_place_id=place.external_id,
+                    name=place.name,
+                    category_code=place.category_code,
+                    category_name=place.category_name,
+                    cuisine_types=place.cuisine_types,
+                    tags=place.tags,
+                    address=place.address,
+                    latitude=place.location.latitude,
+                    longitude=place.location.longitude,
+                    straight_line_distance_meters=place.straight_line_distance_meters,
+                    rating=place.rating,
+                    average_cost=place.average_cost,
+                    opening_hours_text=place.opening_hours_text,
+                    phone=place.phone,
+                    photos=place.photos,
+                    score=place.score,
+                    score_breakdown=place.score_breakdown,
+                    rank=rank,
+                    reason=place.reason,
+                    warnings=place.warnings,
+                    navigation_url=place.navigation_url,
+                    place_snapshot=place.model_dump(mode="json"),
                 )
-                session.add(
-                    PlaceCandidate(
-                        id=place.candidate_id,
-                        decision_run_id=run.id,
-                        place_key=place.id,
-                        external_place_id=place.external_id,
-                        name=place.name,
-                        category_code=place.category_code,
-                        category_name=place.category_name,
-                        cuisine_types=place.cuisine_types,
-                        address=place.address,
-                        latitude=place.location.latitude,
-                        longitude=place.location.longitude,
-                        straight_line_distance_meters=place.straight_line_distance_meters,
-                        rating=place.rating,
-                        average_cost=place.average_cost,
-                        business_status=place.business_status,
-                        opening_hours_text=place.opening_hours_text,
-                        phone=place.phone,
-                        photos=place.photos,
-                        score=place.score,
-                        score_breakdown=place.score_breakdown,
-                        rank=rank,
-                        reason=place.reason,
-                        warnings=place.warnings,
-                        navigation_url=place.navigation_url,
-                        place_snapshot=place.model_dump(mode="json"),
-                    )
-                )
-            run.effective_preferences = state["request"]
-            run.filter_summary = dict(state.get("filter_summary", {}))
-            run.llm_used = bool(state.get("places"))
-            run.status = "completed"
-            run.completed_at = now()
+            )
+        run.effective_preferences = state["request"]
+        run.filter_summary = dict(state.get("filter_summary", {}))
+        run.llm_used = True
+        run.status = "completed"
+        run.completed_at = now()

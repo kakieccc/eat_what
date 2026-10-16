@@ -108,35 +108,30 @@ class AmapGeoPlaceProvider:
         self,
         origin: Point,
         radius: int,
-        limit: int = 30,
+        limit: int = 25,
         keywords: str = "",
         *,
         deadline: float | None = None,
+        page: int = 1,
     ) -> list[Place]:
         operation = "/v3/place/around"
         async with self._budget(operation, deadline) as until:
-            unique: dict[str, Place] = {}
-            for page in range(1, 3):
-                batch = await self._fetch(
-                    operation,
-                    {
-                        "location": mappers.coordinates(origin),
-                        "radius": str(radius),
-                        "types": "050000",
-                        "extensions": "all",
-                        "offset": "25",
-                        "page": str(page),
-                        "sortrule": "distance",
-                        "keywords": keywords,
-                    },
-                    PlaceResponse,
-                    lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-                    until,
-                )
-                unique.update((place.id, place) for place in batch)
-                if len(unique) >= limit or len(batch) < 25:
-                    break
-            return list(unique.values())[:limit]
+            return await self._fetch(
+                operation,
+                {
+                    "location": mappers.coordinates(origin),
+                    "radius": str(radius),
+                    "types": "050000",
+                    "extensions": "all",
+                    "offset": str(min(limit, 25)),
+                    "page": str(page),
+                    "sortrule": "distance",
+                    "keywords": keywords,
+                },
+                PlaceResponse,
+                lambda response, fetched_at: mappers.places(response, origin, fetched_at),
+                until,
+            )
 
     async def detail(
         self, external_id: str, origin: Point, *, deadline: float | None = None

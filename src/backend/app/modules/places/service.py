@@ -4,7 +4,6 @@ from app.core.concurrency import deadline_after, gather_cancel_on_error
 from app.core.errors import AppError
 from app.modules.location.schemas import Point
 from app.modules.places.ports import GeoPlaceProvider, PlaceRepository
-from app.modules.places.rules import infer_cuisine
 from app.modules.places.schemas import Place
 from app.modules.preferences.rules import require_supported_radius
 
@@ -25,6 +24,7 @@ class PlaceService:
         keywords: list[str] | None = None,
         *,
         deadline: float | None = None,
+        page: int = 1,
     ) -> list[Place]:
         require_supported_radius(radius_meters)
         normalized = list(dict.fromkeys(word.strip() for word in keywords or [] if word.strip()))
@@ -35,7 +35,9 @@ class PlaceService:
             async with asyncio.timeout_at(until):
                 batches = await gather_cancel_on_error(
                     *(
-                        self.provider.search(origin, radius_meters, limit, word, deadline=until)
+                        self.provider.search(
+                            origin, radius_meters, limit, word, deadline=until, page=page
+                        )
                         for word in normalized or [""]
                     )
                 )
@@ -46,7 +48,7 @@ class PlaceService:
                 selected = sorted(
                     unique.values(), key=lambda p: (p.straight_line_distance_meters, p.id)
                 )[:limit]
-                result = [self._classify(place) for place in selected]
+                result = selected
                 if asyncio.get_running_loop().time() >= until:
                     raise TimeoutError
                 return result
@@ -59,20 +61,12 @@ class PlaceService:
         until = deadline_after(self.timeout_seconds, deadline)
         try:
             async with asyncio.timeout_at(until):
-                result = self._classify(
-                    await self.provider.detail(external_id, origin, deadline=until)
-                )
+                result = await self.provider.detail(external_id, origin, deadline=until)
                 if asyncio.get_running_loop().time() >= until:
                     raise TimeoutError
                 return result
         except TimeoutError:
             raise AppError("AMAP_UNAVAILABLE", "地图服务暂时不可用", 502, True) from None
-
-    @staticmethod
-    def _classify(place: Place) -> Place:
-        return place.model_copy(
-            update={"cuisine_types": [infer_cuisine(place.name, place.category_name)]}
-        )
 
     async def read(self, user_id: str, place_key: str) -> Place:
         return self.with_navigation(await self.repository.read(user_id, place_key))

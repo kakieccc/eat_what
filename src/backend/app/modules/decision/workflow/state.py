@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-SCHEMA_VERSION = 6
-PROMPT_VERSION = "3"
+SCHEMA_VERSION = 9
+PROMPT_VERSION = "7"
 
 
 class DecisionState(TypedDict, total=False):
@@ -18,9 +18,7 @@ class DecisionState(TypedDict, total=False):
     old_cuisines: list[str]
     action: str
     intent: dict[str, Any]
-    changes: dict[str, Any]
-    awaiting_confirmation: bool
-    confirmation_answer: bool | None
+    search_keywords: list[str]
     next_node: str
     filter_summary: dict[str, int]
     already_completed: bool

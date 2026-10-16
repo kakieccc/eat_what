@@ -10,7 +10,8 @@ def preferences_from_row(row: Preference | None) -> Preferences:
             min=row.typical_budget_per_person_min, max=row.typical_budget_per_person_max
         ),
         radius_meters=row.typical_radius_meters,
-        preferred_cuisines=list(row.preferred_cuisines),
-        excluded_cuisines=list(row.excluded_cuisines),
-        desired_tags=list(row.preferred_tags),
+        allowed_foods=list(row.allowed_foods),
+        preferred_foods=list(row.preferred_foods),
+        excluded_foods=list(row.excluded_foods),
+        soft_preferences=list(row.preferred_tags),
     )

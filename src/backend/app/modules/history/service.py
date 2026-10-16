@@ -20,12 +20,9 @@ class HistoryService:
                 "items": [
                     item.model_copy(
                         update={
-                            "choices": [
-                                choice.model_copy(
-                                    update={"place": self.places.with_navigation(choice.place)}
-                                )
-                                for choice in item.choices
-                            ]
+                            "choice": item.choice.model_copy(
+                                update={"place": self.places.with_navigation(item.choice.place)}
+                            )
                         }
                     )
                     for item in page.items

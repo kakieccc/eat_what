@@ -17,7 +17,11 @@ class PlacesRepository:
                 select(PlaceCandidate)
                 .join(DecisionRun, DecisionRun.id == PlaceCandidate.decision_run_id)
                 .join(DiscoverySession, DiscoverySession.id == DecisionRun.discovery_session_id)
-                .where(PlaceCandidate.place_key == place_key, DiscoverySession.user_id == user_id)
+                .where(
+                    PlaceCandidate.place_key == place_key,
+                    DiscoverySession.user_id == user_id,
+                    DiscoverySession.current_run_id == DecisionRun.id,
+                )
                 .order_by(PlaceCandidate.created_at.desc())
                 .limit(1)
             )

@@ -12,7 +12,6 @@ from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.events import (
-    ConfirmationRequired,
     DecisionEvent,
     NodeCompleted,
     ResultEvent,
@@ -94,12 +93,6 @@ class DecisionRunner:
         finally:
             execution_deadline.reset(token)
         duration = int((time.monotonic() - started) * 1000)
-        if result.get("awaiting_confirmation"):
-            await self.repository.wait_for_confirmation(claim, result, duration)
-            await self.emit(
-                task_id, ConfirmationRequired(data=await self.queries.response_json(run_id))
-            )
-            return
         await self.repository.complete(claim, result, run_id, duration)
         await self.emit(task_id, ResultEvent(data=await self.queries.response_json(run_id)))
 
@@ -138,9 +131,7 @@ class DecisionRunner:
             if isinstance(error, AppError)
             else AppError(
                 "DECISION_TIMEOUT" if is_timeout else "INTERNAL_ERROR",
-                "本次推荐超时，请重试或减少条件"
-                if is_timeout
-                else "执行失败，请重新推荐",
+                "本次推荐超时，请重试或减少条件" if is_timeout else "执行失败，请重新推荐",
                 504 if is_timeout else 500,
                 is_timeout,
             )

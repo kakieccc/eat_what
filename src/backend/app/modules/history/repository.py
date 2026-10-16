@@ -11,9 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import AppError
 from app.modules.choice.models import PlaceChoice
 from app.modules.decision.models import DecisionRun, DiscoverySession, PlaceCandidate
-from app.modules.decision.repository.mappers import place_from_candidate, request_from_session
+from app.modules.decision.repository.mappers import place_from_candidate, request_for_run
 from app.modules.history.schemas import HistoryChoice, HistoryItem, HistoryPage
-from app.modules.preferences.schemas import Preferences
 
 
 class HistoryRepository:
@@ -22,14 +21,15 @@ class HistoryRepository:
 
     async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage:
         async with self.sessions() as session:
-            query = select(DiscoverySession).where(
-                DiscoverySession.user_id == user_id,
-                select(PlaceChoice.id)
+            query = (
+                select(DiscoverySession, PlaceChoice, PlaceCandidate, DecisionRun)
+                .join(PlaceChoice, PlaceChoice.discovery_session_id == DiscoverySession.id)
+                .join(PlaceCandidate, PlaceChoice.place_candidate_id == PlaceCandidate.id)
+                .join(DecisionRun, DecisionRun.id == PlaceCandidate.decision_run_id)
                 .where(
-                    PlaceChoice.discovery_session_id == DiscoverySession.id,
-                    PlaceChoice.user_id == user_id,
+                    DiscoverySession.user_id == user_id, PlaceChoice.user_id == user_id,
+                    DecisionRun.id == DiscoverySession.current_run_id,
                 )
-                .exists(),
             )
             if cursor:
                 try:
@@ -42,9 +42,9 @@ class HistoryRepository:
                     raise AppError("INVALID_CURSOR", "分页参数无效") from None
                 query = query.where(
                     or_(
-                        DiscoverySession.created_at < timestamp,
+                        PlaceChoice.selected_at < timestamp,
                         and_(
-                            DiscoverySession.created_at == timestamp,
+                            PlaceChoice.selected_at == timestamp,
                             DiscoverySession.id < row_id,
                         ),
                     )
@@ -52,62 +52,32 @@ class HistoryRepository:
 
             sessions = list(
                 (
-                    await session.scalars(
+                    await session.execute(
                         query.order_by(
-                            DiscoverySession.created_at.desc(), DiscoverySession.id.desc()
+                            PlaceChoice.selected_at.desc(), DiscoverySession.id.desc()
                         ).limit(limit + 1)
                     )
                 ).all()
             )
             page_sessions = sessions[:limit]
-            session_ids = [row.id for row in page_sessions]
-            choices = (
-                list(
-                    (
-                        await session.execute(
-                            select(PlaceChoice, PlaceCandidate, DecisionRun)
-                            .join(
-                                PlaceCandidate, PlaceChoice.place_candidate_id == PlaceCandidate.id
-                            )
-                            .join(DecisionRun, DecisionRun.id == PlaceCandidate.decision_run_id)
-                            .where(
-                                PlaceChoice.discovery_session_id.in_(session_ids),
-                                PlaceChoice.user_id == user_id,
-                            )
-                            .order_by(PlaceChoice.created_at.desc())
-                        )
-                    ).all()
+            items = [
+                HistoryItem(
+                    id=row.id,
+                    created_at=choice.selected_at,
+                    request=request_for_run(run, row),
+                    choice=HistoryChoice(
+                        id=choice.id,
+                        place=place_from_candidate(candidate),
+                        decision_run_id=run.id,
+                    ),
                 )
-                if session_ids
-                else []
-            )
-            items: list[HistoryItem] = []
-            for row in page_sessions:
-                request = request_from_session(row)
-                items.append(
-                    HistoryItem(
-                        id=row.id,
-                        created_at=row.created_at,
-                        request=Preferences.model_validate(
-                            request.model_dump(exclude={"origin"}, mode="json")
-                        ),
-                        choices=[
-                            HistoryChoice(
-                                id=choice.id,
-                                feedback=choice.feedback,
-                                place=place_from_candidate(candidate),
-                                decision_run_id=run.id,
-                            )
-                            for choice, candidate, run in choices
-                            if choice.discovery_session_id == row.id
-                        ],
-                    )
-                )
+                for row, choice, candidate, run in page_sessions
+            ]
             next_cursor = None
             if len(sessions) > limit and page_sessions:
-                last = page_sessions[-1]
+                last, choice = page_sessions[-1][0], page_sessions[-1][1]
                 next_cursor = base64.urlsafe_b64encode(
-                    json.dumps([last.created_at.isoformat(), last.id]).encode()
+                    json.dumps([choice.selected_at.isoformat(), last.id]).encode()
                 ).decode()
             return HistoryPage(items=items, next_cursor=next_cursor)
 
@@ -116,15 +86,7 @@ class HistoryRepository:
             discovery = await session.get(DiscoverySession, session_id)
             if discovery is None or discovery.user_id != user_id:
                 raise AppError("NOT_FOUND", "记录不存在", 404)
-            return list(
-                (
-                    await session.scalars(
-                        select(DecisionRun.id)
-                        .where(DecisionRun.discovery_session_id == session_id)
-                        .order_by(DecisionRun.created_at.desc())
-                    )
-                ).all()
-            )
+            return [discovery.current_run_id] if discovery.current_run_id else []
 
     async def ready(self) -> None:
         async with self.sessions() as session:

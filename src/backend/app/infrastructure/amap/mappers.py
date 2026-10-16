@@ -53,7 +53,23 @@ def place(raw: RawPlace, origin: Point, fetched_at: datetime) -> Place:
         name=raw.name[:150],
         category_code=raw.typecode,
         category_name=raw.type[:200],
-        cuisine_types=[],
+        cuisine_types=list(
+            dict.fromkeys(
+                v.strip()
+                for v in [
+                    raw.type.split(";")[-1],
+                    *(raw.atag.split("/") if isinstance(raw.atag, str) else []),
+                ]
+                if v.strip() and v != "餐饮服务"
+            )
+        ),
+        tags=[
+            v.strip()
+            for value in (raw.tag, raw.atag)
+            if isinstance(value, str)
+            for v in re.split("[,;，/]", value)
+            if v.strip()
+        ],
         address=raw.address[:250] if isinstance(raw.address, str) else "",
         location=location,
         straight_line_distance_meters=distance(origin, location),

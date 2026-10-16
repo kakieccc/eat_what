@@ -18,12 +18,13 @@ class Place(Model):
     category_code: str
     category_name: str
     cuisine_types: list[str]
+    tags: list[str] = Field(default_factory=list)
+    field_updated_at: dict[str, datetime] = Field(default_factory=dict)
     address: str
     location: Point
     straight_line_distance_meters: int = Field(ge=0)
     rating: float | None = Field(default=None, ge=0, le=5)
     average_cost: Decimal | None = Field(default=None, ge=0)
-    business_status: Literal["open", "closed", "unknown"] = "unknown"
     opening_hours_text: str | None = None
     phone: str | None = None
     photos: list[str] = Field(default_factory=list)

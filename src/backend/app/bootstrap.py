@@ -16,7 +16,6 @@ from app.infrastructure.amap.cache import AmapCache
 from app.infrastructure.amap.client import AmapClient
 from app.infrastructure.amap.provider import AmapGeoPlaceProvider
 from app.infrastructure.database.session import create_sessions, engine_of
-from app.infrastructure.database.tables import create_tables
 from app.infrastructure.llm.provider import OpenAICompatibleLlm
 from app.modules.auth.passwords import Argon2PasswordHasher
 from app.modules.auth.repository import SqlAuthRepository
@@ -55,9 +54,7 @@ def build_container(
         ),
         settings.amap_operation_timeout_seconds,
     )
-    places = PlaceService(
-        PlacesRepository(sessions), amap, settings.amap_operation_timeout_seconds
-    )
+    places = PlaceService(PlacesRepository(sessions), amap, settings.amap_operation_timeout_seconds)
     llm = DecisionLlmService(OpenAICompatibleLlm(settings, llm_client))
     repository = DecisionRepository(sessions, settings.llm_model)
     auth = AuthService(
@@ -87,7 +84,9 @@ def build_container(
         amap=amap,
         llm=llm,
         worker=worker,
-        decision_commands=DecisionCommandService(repository),
+        decision_commands=DecisionCommandService(
+            repository, llm, settings.decision_timeout_seconds
+        ),
         decision_queries=queries,
         decision_streams=DecisionStreamService(tasks, queries, auth),
         location=LocationService(amap),
@@ -120,7 +119,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ) as llm_client,
     ):
         try:
-            await create_tables(engine_of(sessions))
             app.state.container = build_container(settings, sessions, client, llm_client)
             app.state.ready = True
             worker = asyncio.create_task(app.state.container.worker.run())

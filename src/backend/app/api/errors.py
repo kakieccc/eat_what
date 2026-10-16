@@ -15,17 +15,12 @@ from app.core.errors import AppError
 log = logging.getLogger("food")
 
 
-def error_response(
-    request: Request,
-    error: AppError,
-    *,
-    details: dict[str, Any] | None = None,
-) -> JSONResponse:
+def error_response(request: Request, error: AppError) -> JSONResponse:
     body = ErrorEnvelope(
         error={
             "code": error.code,
             "message": error.message,
-            "details": {"retryable": error.retryable, **(details or {})},
+            "details": {"retryable": error.retryable},
         },
         meta={"requestId": getattr(request.state, "request_id", "")},
     )
@@ -38,12 +33,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         return error_response(request, error)
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
-        fields = [{"location": list(item["loc"]), "type": item["type"]} for item in error.errors()]
+    async def validation_error(request: Request, _: RequestValidationError) -> JSONResponse:
         return error_response(
             request,
             AppError("INVALID_INPUT", "输入格式有误，请检查条件", 422),
-            details={"fields": fields},
         )
 
     @app.exception_handler(SQLAlchemyError)
@@ -94,6 +87,5 @@ DESCRIPTIONS = {
 
 def error_responses(*statuses: int) -> dict[int | str, dict[str, Any]]:
     return {
-        status: {"model": ErrorEnvelope, "description": DESCRIPTIONS[status]}
-        for status in statuses
+        status: {"model": ErrorEnvelope, "description": DESCRIPTIONS[status]} for status in statuses
     }

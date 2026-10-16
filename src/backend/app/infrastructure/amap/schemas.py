@@ -29,6 +29,8 @@ class RawPlace(Raw):
     location: str
     type: str = ""
     typecode: str = ""
+    tag: str | list[JsonValue] = ""
+    atag: str | list[JsonValue] = ""
     address: str | list[JsonValue] = ""
     tel: str | list[JsonValue] = ""
     biz_ext: RawBiz = Field(default_factory=RawBiz)

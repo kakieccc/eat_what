@@ -7,10 +7,10 @@ from collections.abc import AsyncIterator
 from pydantic import TypeAdapter
 
 from app.core.clock import now
+from app.core.errors import AppError
 from app.modules.auth.service import AuthService
 from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.decision.workflow.events import (
-    ConfirmationRequired,
     DecisionEvent,
     Heartbeat,
     ResultEvent,
@@ -38,6 +38,15 @@ class DecisionStreamService:
             current = await self.auth.authenticate(token)
             if current.user.id != user_id:
                 return
+            try:
+                await self.queries.get_for_user(user_id, run_id)
+            except AppError as error:
+                if error.code != "RUN_SUPERSEDED":
+                    raise
+                yield RunFailed(error=WorkflowError(
+                    code="RUN_SUPERSEDED", message="请求冲突", retryable=False,
+                ))
+                return
             task = await self.tasks.latest_for_run(run_id)
             if task is not None and task.id != current_task_id:
                 current_task_id = task.id
@@ -46,16 +55,17 @@ class DecisionStreamService:
                 for row in await self.tasks.events(current_task_id, last_sequence):
                     event = EVENT_ADAPTER.validate_python(row.payload)
                     last_sequence = row.sequence
-                    yield event
-                    if event.type in {"result", "runFailed", "confirmationRequired"}:
+                    if event.type == "result":
+                        data = await self.queries.get_for_user(user_id, run_id)
+                        yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
+                    else:
+                        yield event
+                    if event.type in {"result", "runFailed"}:
                         return
-            if task is None or task.status in {"succeeded", "waiting_confirmation", "failed"}:
+            if task is None or task.status in {"succeeded", "failed"}:
                 data = await self.queries.get_for_user(user_id, run_id)
                 if data.status == "completed":
                     yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
-                    return
-                if data.status == "awaitingConfirmation":
-                    yield ConfirmationRequired(data=data.model_dump(mode="json", by_alias=True))
                     return
                 if data.status == "failed":
                     yield RunFailed(

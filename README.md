@@ -24,19 +24,22 @@ cp .env.example .env
 
 不要将密钥提交到版本控制。缺少配置或仍使用 `replace-` 占位符时，后端启动失败。
 
-先创建数据库和数据库用户；应用启动时会按当前 ORM 模型创建缺失表，并启动持久化 Task Worker：
+先创建数据库和数据库用户；在 `src/backend` 执行 Alembic 迁移初始化表，再启动应用及持久化 Task Worker：
 
 ```bash
+uv run alembic upgrade head
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-开发阶段不维护数据库迁移。修改表结构后，先停止后端与 Worker，再重建开发表：
+数据库结构由 `alembic/versions/` 中的迁移文件管理，初始版本为 `0001`。应用启动不再自动建表。修改 ORM 模型后生成迁移，审阅生成的字段、约束和数据处理，再停止后端与 Worker 并升级数据库：
 
 ```bash
-uv run python -m app.infrastructure.database.tables --rebuild
+uv run alembic revision --autogenerate -m "describe schema change"
+uv run alembic upgrade head
+uv run alembic current
 ```
 
-该命令会删除 `DATABASE_URL` 所指数据库当前 schema 的全部表及数据，再按当前 ORM 模型创建表，包括清理已废弃的旧表。正常启动只创建缺失表，不修改已有表结构。使用专用开发数据库；准备上线时再引入数据库迁移。
+Alembic 从应用配置读取 `DATABASE_URL`，`alembic.ini` 不保存连接凭据。初始迁移创建 13 张业务表和 `alembic_version` 版本表；旧的全表重建命令已移除。
 
 另一个终端启动前端：
 
@@ -56,69 +59,69 @@ pnpm dev --host localhost
 
 ## 功能
 
-- 首页设置预算、搜索半径、菜系、场景、人数、餐段和自然语言条件。半径固定为 500 米、1 km、2 km、5 km，默认 2 km，表示以确认位置为中心的直线范围。
+- 首页设置预算、搜索半径、食物偏好、排除/限定食物、场景、人数、餐段和自然语言条件。半径仅支持 500 米、1 km、2 km、5 km 四档，默认 2 km，表示以确认位置为中心的直线范围。
 - 搜索地址、浏览器定位（转换坐标）、点击高德地图选点，主动确认位置。
-- LangGraph 显式工作流：搜索、条件过滤、距离评分、LLM 重排、多样性和证据理由；执行状态由 PostgreSQL Task 管理。
-- Fetch-based SSE 业务进度；硬约束变更暂停确认；断流后查询结果恢复。
+- 提交完整表单及原文，由 LLM 解析意图和搜索方向；条件收紧直接生效，冲突时前端显示固定提示。LangGraph 执行关键词检索、过滤、详情补全、LLM 匹配重排、多样性和事实理由；执行状态由 PostgreSQL Task 管理。
+- Fetch-based SSE 业务进度；断流后查询结果恢复。
 - 八种 Refine API 动作；常用五种直接展示为快捷按钮。
-- 选择餐厅、查看直线距离、在高德查看目标地点、保存历史和基础偏好。
+- 每次选餐会话保存一个最终餐厅，支持改选；查看直线距离、在高德查看目标地点、保存历史和基础偏好。
 
-人均和营业信息未知时保留候选并提示，不声称已满足预算或正在营业。实际道路距离可能长于直线距离。服务请求失败返回错误。无符合条件的候选正常返回空结果，不自动放宽条件。
+人均信息未知时保留候选并提示，不声称已满足预算。应用不记录或检查营业状态。实际道路距离可能长于直线距离。服务请求失败返回错误。无符合条件的候选正常返回空结果，不自动放宽条件。
 
-## 验证
+## 静态检查
 
 ```bash
 cd src/backend
-uv run ruff check app tests
+uv run ruff check app
 uv run mypy app
-uv run pytest -q
 
 cd ../frontend
 pnpm typecheck
 pnpm lint
-pnpm test
-pnpm build
-pnpm exec playwright install chromium
-pnpm e2e
 ```
 
-后端 `tests/` 当前验证真实 PostgreSQL 建表、重建、失败回滚及选择接口的并发幂等，不发起高德或 LLM 请求。
+当前保留 Ruff、mypy、TypeScript 和 ESLint 静态检查工具。后端使用 pytest，前端使用 Vitest，真实浏览器验收使用 Playwright。测试入口、独立数据库配置和用例范围见 [测试说明](docs/testing.md)。
 
-数据库测试只读取显式设置的 `TEST_DATABASE_URL`，要求数据库名称以 `_test` 结尾，并为每个测试创建独立 schema，结束后只删除该 schema。测试账号需要创建 schema 的权限；不读取应用 `.env` 中的数据库连接。未设置该变量时，数据库测试会跳过，跳过不代表通过。
+## 测试
 
 ```bash
 cd src/backend
-# 指向独立测试数据库；用实际测试账号与端口替换示例值。
-TEST_DATABASE_URL='postgresql+asyncpg://test_user:test_password@127.0.0.1:5432/eat_what_test' uv run pytest -q
-# 仅运行不需要数据库的用例：
-uv run pytest -q -m 'not database'
+uv run pytest
+uv run pytest -m integration
+uv run pytest -m live
+
+cd ../frontend
+pnpm test
+pnpm test:typecheck
+pnpm test:install-browser
+pnpm test:e2e:live
 ```
 
-真实上游联调仍需要有效 Key；真实前端 E2E 另需 `TEST_ADDRESS`。
+默认单元测试不调用外部服务。数据库测试需要显式配置 `TEST_DATABASE_URL`，只允许独立的 `food_nav_test`；真实 API 和浏览器测试另外需要有效高德、LLM 配置，并消耗上游配额。真实测试单独触发、串行执行，没有测试层自动重试。测试报告、截图和 trace 位于各端的 `test-results/`，不提交到 Git。
 
 ## 设计与运维边界
 
 - `app/main.py` 创建应用并挂载路由；`app/api` 使用扁平结构：`router.py` 汇总路由，`dependencies.py` 提供公共依赖，`schemas.py` 定义公共响应与错误模型，`errors.py` 处理异常及错误响应声明，`health.py` 提供健康检查，`middleware.py` 注册中间件。
 - `app/modules` 按 auth、location、places、preferences、history、choice、task、decision 组织业务代码。模块内 `router.py` 处理 HTTP，`schemas.py` 定义 Pydantic 请求、响应与可复用数据结构，`models.py` 定义 ORM 表，`service.py` 编排业务用例，`repository.py` 实现存储，`ports.py` 定义依赖协议。简单模块仅保留需要的文件，location 和 history 不创建自己的 ORM 表。
-- 业务路由通过模块的 `dependencies.py` 注入 service；`app/container.py` 保存进程级共享实例，`app/bootstrap.py` 统一组装并通过 lifespan 管理资源。`app/infrastructure` 保留高德、LLM 和共享数据库设施；密码哈希实现位于 `app/modules/auth/passwords.py`；`app/infrastructure/database/tables.py` 统一注册 ORM 模型、创建表并提供开发重建命令。
-- `infrastructure/amap/provider.py` 编排地图操作，`client.py` 管理 HTTP、超时、并发、请求间隔和重试，`schemas.py` 定义高德响应及缓存封装，`mappers.py` 转换坐标和业务数据，`cache.py` 读写缓存，`models.py` 定义缓存表。`location/ports.py` 的 `LocationProvider` 与 `places/ports.py` 的 `GeoPlaceProvider` 由同一适配器实现；菜系推断位于 `places/rules.py`，搜索与详情统一经过 `PlaceService`。
-- `app/modules/decision/service/` 内的 `commands.py` 编排创建、调整、确认恢复和幂等，`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件，模块内的 `sse.py` 编码 SSE 帧；`repository/` 包含存储、事务实现和 mapper；`rules/` 存放筛选、评分和调整规则；`workflow/` 保留 LangGraph State、节点、事件和 Prompt。
-- `decision/service/llm.py` 组织偏好解析、候选重排和推荐理由，统一调用 `rules/llm.py` 校验菜系、候选与事实证据；LLM 输出模型定义在模块的 `schemas.py`。`infrastructure/llm/provider.py` 只负责通用结构化调用、模型参数和调用异常转换，通过 `StructuredLlm` 协议注入业务服务。
+- 业务路由通过模块的 `dependencies.py` 注入 service；`app/container.py` 保存进程级共享实例，`app/bootstrap.py` 统一组装并通过 lifespan 管理资源。`app/infrastructure` 保留高德、LLM 和共享数据库设施；密码哈希实现位于 `app/modules/auth/passwords.py`；`app/infrastructure/database/metadata.py` 统一注册 ORM 模型，供 Alembic 自动生成迁移使用；`alembic/versions/` 保存表结构变更。
+- `infrastructure/amap/provider.py` 编排地图操作，`client.py` 管理 HTTP、超时、并发、请求间隔和重试，`schemas.py` 定义高德响应及缓存封装，`mappers.py` 转换坐标和业务数据，`cache.py` 读写缓存，`models.py` 定义缓存表。`location/ports.py` 的 `LocationProvider` 与 `places/ports.py` 的 `GeoPlaceProvider` 由同一适配器实现；保留高德分类与标签，搜索与详情统一经过 `PlaceService`，不从店名硬编码推断菜系。
+- `app/modules/decision/service/` 内的 `commands.py` 编排创建、调整和幂等，`queries.py` 读取结果，`runner.py` 协调 Task 与 Graph，`streaming.py` 重放事件，模块内的 `sse.py` 编码 SSE 帧；`repository/` 包含存储、事务实现和 mapper；`rules/` 存放筛选、评分和调整规则；`workflow/` 保留 LangGraph State、节点、事件和 Prompt。
+- `decision/service/llm.py` 组织偏好解析、候选重排和推荐理由，统一调用 `rules/llm.py` 校验条件冲突、候选与事实证据；LLM 输出模型定义在模块的 `schemas.py`。`infrastructure/llm/provider.py` 只负责通用结构化调用、模型参数和调用异常转换，通过 `StructuredLlm` 协议注入业务服务。
 - `app/modules/task/repository.py` 管理任务持久化，`service.py` 中的 Worker 通过回调执行任务；运行类型位于 `types.py`，租约异常位于 `errors.py`。`location/geometry.py` 提供距离计算，供高德适配器复用。
 - service、rules 和 workflow 不直接引用 ORM 或 SQLAlchemy Session。跨模块 ORM 联查保留在持久化实现中，高德适配器保留基础设施缓存读写。choice 的业务判断由 service 承担，检查、选择写入及幂等记录仍在同一事务内完成；跨表写入使用短事务，外部调用期间不持有数据库事务。
 - 业务数据使用 PostgreSQL 表；每个执行请求都有 `Task`、`TaskStep` 和 `TaskEvent`，Task 状态是执行事实来源，结果仍从业务表读取。
 - 幂等记录按用户和操作隔离；Task 使用短事务、租约和 `FOR UPDATE SKIP LOCKED` 防止跨进程重复执行。
-- 推荐总执行预算默认 20 秒，等待用户确认不计时。较慢模型可能需要提高 `DECISION_TIMEOUT_SECONDS`，性能必须以真实调用衡量。
-- 搜索最多 30 个 POI，重排前最多保留 10 个候选，最终最多推荐 3 家。距离评分使用直线距离与所选半径；详情只查询最终候选。
-- 地点搜索将最多五个关键词去空白、去重后分别查询，每个关键词最多两页、每页 25 条，以 OR 语义合并；按地点 ID 去重，按直线距离及 ID 排序后截断到 `limit`。任一查询失败会取消并等待其他查询，不返回部分结果。`GET /places/{placeKey}` 仍读取用户已保存的推荐地点。
-- 高德只在 HTTP 层重试，最多三次，使用指数退避与抖动；网络错误、HTTP `429/500/502/503/504` 和官方瞬时错误码可重试，遵守 `Retry-After` 与剩余预算。Key、权限、参数、每日配额及未知错误不重试，按分钟限制的 `10004` 不在本次调用中重试。各调用使用自身预算与推荐剩余预算中更早的截止时间。
+- 推荐总执行预算默认 20 秒，包含提交时的意图解析。较慢模型可能需要提高 `DECISION_TIMEOUT_SECONDS`，性能必须以真实调用衡量。
+- 推荐按最多五个关键词轮询分页，每页 25 条，每次 Run 最多八次搜索请求。先去重并排除已知不满足条件的地点，再截取最多十个候选补全详情；详情只用较新且非空的字段覆盖，随后重新过滤。最终由 LLM 匹配与排序，多样性选择最多三家。检索不足时可在原条件下补充通用餐饮搜索，不自动放宽预算或半径。
+- `GET /places` 是单页地点查询；推荐流程的跨关键词分页与请求预算由 decision 编排。`GET /places/{placeKey}` 读取用户已保存的推荐地点。未知人均或食物匹配保留并警告；已知违反条件的候选剔除。
+- 高德只在 HTTP 层重试，最多请求三次，等待时间仅使用本地指数退避 `0.2 × 2^(attempt−1)` 秒，加 0–0.1 秒随机抖动，并受剩余时间预算约束。网络错误、HTTP `429/500/502/503/504` 和官方瞬时错误码可重试。Key、权限、参数、每日配额及未知错误不重试，按分钟限制的 `10004` 不在本次调用中重试。各调用使用自身预算与推荐剩余预算中更早的截止时间。
 - 仅成功且通过响应校验和业务数据转换的结果会缓存，常规缓存 `AMAP_CACHE_TTL_SECONDS=600`，空结果缓存 `AMAP_EMPTY_CACHE_TTL_SECONDS=30`。缓存键由接口路径和参数生成，响应与 `fetched_at` 分开保存；命中缓存保留原始采集时间。损坏内容视为未命中，数据库读写失败继续报错；外部 HTTP 请求期间不持有数据库事务。
 - 前端定位已转换为 GCJ-02，后端直接按高德坐标使用；经纬度格式与导航 URL 由适配器处理。请求日志只记录操作、耗时、次数、缓存命中及错误分类，不记录 Key 或带 Key 的 URL。
 - 过期缓存和幂等记录由后续运维任务负责清理；不清除业务历史。
 - `GET /health/live` 检查进程；`GET /health/ready` 检查数据库与工作流初始化，不发起收费上游调用。
-- PWA、生产部署、自动长期偏好学习、收藏、账号、骑行驾车和评测看板均不在本轮范围。
+- PWA、生产部署、自动长期偏好学习、收藏、骑行驾车和评测看板均不在本轮范围。
 - 当前版本包含用户登录和账户归属；不提供跨设备同步以外的长期偏好学习。
-- 当前工作流版本为 `6`、提示词版本为 `3`。开发阶段表结构或工作流状态变更后直接重建表，重新注册账号并生成推荐。前端草稿版本为 `2`，保留旧半径并提示重新选择。
+- 当前工作流版本为 `8`、提示词版本为 `6`。表结构变更通过 Alembic 迁移；旧工作流版本的待执行任务需要重新生成推荐。前端草稿版本为 `5`，旧结构草稿重置一次；同账号刷新保留本次条件、位置和推荐入口，退出、登录失效或切换账号时清空。
 
 ## API 资源
 
@@ -128,13 +131,14 @@ uv run pytest -q -m 'not database'
 - `POST /decision-runs`、`GET /decision-runs/{runId}`：创建或读取决策。
 - `GET /decision-runs/{runId}/events`：订阅决策的 SSE 事件资源。
 - `POST /decision-runs/{runId}/refinements`：创建一次调整后的子决策。
-- `PATCH /decision-runs/{runId}`：确认条件或恢复决策执行，返回 `202` 后继续订阅事件。
 - `GET /discovery-sessions`、`GET /discovery-sessions/{sessionId}/decision-runs`：读取历史会话及其决策。
-- `POST /place-choices`：创建地点选择记录。
+- `POST /place-choices`：选择或改选餐厅，返回 `200`；只提交 `candidateId`。
 - `GET /preferences`、`PUT /preferences`：读取或完整替换偏好资源。
 
 普通响应统一使用 `{ success, data, meta }`，异常统一使用 `{ success, error, meta }`。创建资源返回 `201` 和 `Location` 响应头。
 
-创建推荐、保存偏好和地点集合查询的 `radiusMeters` 只接受 `500 / 1000 / 2000 / 5000`，默认 `2000`，其他值返回 `422`。Refine 动作 `changeRadius` 使用 `{ "action": "changeRadius", "value": 1000 }`，支持扩大或缩小范围；旧半径需先执行该动作再做其他调整。自然语言中有效距离经过现有确认流程，明确指定其他距离返回 `UNSUPPORTED_RADIUS`，不自动取整或根据时间估算距离。历史响应保留原半径，读取类型与新请求校验分开。
+`DecisionRequest` 由 `origin`、`preferences`、`requestText`、`mealPeriod`、`partySize` 组成。`Preferences` 仅保存预算、半径、`preferredFoods`、`excludedFoods`、`allowedFoods`、`softPreferences`。食物为自由文本，限定列表内部为 OR，空列表不限定。
+
+`radiusMeters` 仅接受 `500 / 1000 / 2000 / 5000` 四档半径。自然语言可以收紧表单条件；明确放宽预算、半径或解除排除时返回 `422 INPUT_CONFLICT` 和统一冲突提示，不返回具体字段、原因或原文片段。前端按错误码显示固定文案“表单条件与补充说明存在冲突，请调整条件后重试。”，不使用后端冲突文案，不创建 Run 或进入二次确认。原始请求和生效意图分别保存。调整接口使用明确新值，不重新解析旧原文；`excludePlace` 只排除指定地点，`refresh` 排除本会话已展示地点，其他排序调整可保留旧候选。历史读取当前最终选择对应 Run 的生效条件。
 
 API 文档由 FastAPI 的 `/docs` 和 `/openapi.json` 提供。集成依据：[高德 POI](https://lbs.amap.com/api/webservice/guide/api-advanced/search)、[地点标注](https://lbs.amap.com/api/uri-api/guide/mobile-web/point)、[坐标转换](https://lbs.amap.com/api/javascript-api-v2/guide/transform/convertfrom)。

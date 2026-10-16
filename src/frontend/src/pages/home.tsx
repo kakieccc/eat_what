@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { MapPin, ChevronRight } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,24 +7,54 @@ import { Button } from "../components/ui/button";
 import { useDraft } from "../lib/store";
 import { useAuth } from "../lib/auth";
 import { configError, request } from "../lib/api";
-import { preferencesSnapshotSchema, type Preferences, type PreferencesSnapshot } from "../lib/schemas";
+import {
+  preferencesSnapshotSchema,
+  type Preferences,
+  defaults,
+  runSchema,
+  toDecisionRequest,
+  storedPreferencesSchema,
+} from "../lib/schemas";
 export function Home() {
   const draft = useDraft(),
     navigate = useNavigate();
   const saved = useQuery({
     queryKey: ["preferences"],
-    queryFn: () => request<PreferencesSnapshot>("/preferences", undefined, "GET", undefined, undefined, preferencesSnapshotSchema),
+    queryFn: () =>
+      request(
+        "/preferences",
+        undefined,
+        "GET",
+        undefined,
+        undefined,
+        storedPreferencesSchema,
+      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p })),
     enabled: !draft.hasDraft && !configError,
     retry: false,
   });
-  const submit = (preferences: Preferences) => {
+  const client = useQueryClient();
+  const submission = useRef<{ body: string; key: string } | null>(null);
+  const submit = async (preferences: Preferences) => {
     draft.setPreferences(preferences);
     if (!draft.origin) {
       navigate("/map");
       return;
     }
-    draft.setRunId(null);
-    sessionStorage.setItem("food-start", crypto.randomUUID());
+    const body = toDecisionRequest(preferences, draft.origin);
+    const serialized = JSON.stringify(body);
+    if (submission.current?.body !== serialized)
+      submission.current = { body: serialized, key: crypto.randomUUID() };
+    const run = await request(
+      "/decision-runs",
+      body,
+      "POST",
+      submission.current.key,
+      undefined,
+      runSchema,
+    );
+    submission.current = null;
+    client.setQueryData(["run", run.decisionRunId], run);
+    draft.setRunId(run.decisionRunId);
     navigate("/discover");
   };
   return (
@@ -60,7 +90,15 @@ export function Profile() {
     navigate = useNavigate();
   const query = useQuery({
     queryKey: ["preferences"],
-    queryFn: () => request<PreferencesSnapshot>("/preferences", undefined, "GET", undefined, undefined, preferencesSnapshotSchema),
+    queryFn: () =>
+      request(
+        "/preferences",
+        undefined,
+        "GET",
+        undefined,
+        undefined,
+        storedPreferencesSchema,
+      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p })),
     retry: false,
   });
   const client = useQueryClient(),
@@ -85,7 +123,14 @@ export function Profile() {
     setBusy(true);
     setNotice("");
     try {
-      const saved = await request<Preferences>("/preferences", p, "PUT");
+      const saved = await request(
+        "/preferences",
+        storedPreferencesSchema.parse(p),
+        "PUT",
+        undefined,
+        undefined,
+        storedPreferencesSchema,
+      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p }));
       client.setQueryData(["preferences"], saved);
       draft.setPreferences(saved);
       setNotice("偏好已保存，下次选餐时会使用这些条件。");
@@ -112,6 +157,7 @@ export function Profile() {
         <PreferencesForm
           initial={query.data}
           onSubmit={save}
+          personal
           label="保存偏好"
           busy={busy}
         />
@@ -122,11 +168,19 @@ export function Profile() {
           <strong>{auth.user?.displayName}</strong>
           <p>@{auth.user?.username}</p>
         </div>
-        <Button variant="outline" disabled={logoutBusy} onClick={() => void logout()}>
+        <Button
+          variant="outline"
+          disabled={logoutBusy}
+          onClick={() => void logout()}
+        >
           {logoutBusy ? "正在退出…" : "退出登录"}
         </Button>
       </section>
-      {logoutError && <p role="alert" className="error">{logoutError}</p>}
+      {logoutError && (
+        <p role="alert" className="error">
+          {logoutError}
+        </p>
+      )}
     </>
   );
 }

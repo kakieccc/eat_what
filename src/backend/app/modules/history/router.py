@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Query
 
 from app.api.errors import error_responses
@@ -22,8 +24,8 @@ async def list_discovery_sessions(
 
 @router.get("/{session_id}/decision-runs", responses=error_responses(401, 404, 422, 503))
 async def list_session_decision_runs(
-    session_id: str,
+    session_id: UUID,
     history: HistoryServiceDependency,
     user: CurrentUserDependency,
 ) -> Envelope[list[DecisionRunResponse]]:
-    return Envelope(data=await history.runs(user.user.id, session_id))
+    return Envelope(data=await history.runs(user.user.id, str(session_id)))

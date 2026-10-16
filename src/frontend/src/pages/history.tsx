@@ -1,25 +1,35 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, ClipboardList, MapPin } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
-import { request } from "../lib/api";
+import { ApiError, request } from "../lib/api";
+import { isDiscardedRun, refreshCurrentRecommendation } from "../lib/recommendations";
 import { useDraft } from "../lib/store";
-import { defaults, runSchema, type Place, type PreferencesSnapshot, type Run } from "../lib/schemas";
+import {
+  fromDecisionRequest,
+  runSchema,
+  type Place,
+  type DecisionRequest,
+  type Run,
+} from "../lib/schemas";
 import { formatDistance, navigationHref } from "../lib/utils";
 import { useParams, useSearchParams } from "react-router-dom";
 type HistoryData = {
   items: {
     id: string;
     createdAt: string;
-    request: PreferencesSnapshot;
-    choices: {
+    request: DecisionRequest;
+    choice: {
       id: string;
-      feedback: string;
       decisionRunId: string;
       place: Place;
-    }[];
+    };
   }[];
   nextCursor?: string | null;
 };
@@ -73,37 +83,26 @@ export function History() {
                   timeZone: "Asia/Shanghai",
                 })}
               </time>
-              {item.choices.length === 0 ? (
-                <p>本次尚未选择餐厅</p>
-              ) : (
-                item.choices.map((choice) => (
-                  <Link
-                    key={choice.id}
-                    to={`/decision-runs/${choice.decisionRunId}?place=${choice.place.id}`}
-                  >
-                    <h2>
-                      {choice.place.name}
-                      <ArrowUpRight size={18} />
-                    </h2>
-                    <p>
-                      {choice.place.cuisineTypes.join(" · ")} ·{" "}
-                      直线 {formatDistance(choice.place.straightLineDistanceMeters)}
-                    </p>
-                    {choice.feedback && <p>{choice.feedback}</p>}
-                  </Link>
-                ))
-              )}
+              <Link
+                to={`/decision-runs/${item.choice.decisionRunId}?place=${item.choice.place.id}`}
+              >
+                <h2>
+                  {item.choice.place.name}
+                  <ArrowUpRight size={18} />
+                </h2>
+                <p>
+                  {item.choice.place.cuisineTypes.join(" · ")} · 直线{" "}
+                  {formatDistance(item.choice.place.straightLineDistanceMeters)}
+                </p>
+              </Link>
               <button
                 className="text-button"
                 onClick={() => {
                   draft.setPreferences({
-                    ...defaults,
-                    ...item.request,
-                    budgetPerPerson: {
-                      min: item.request.budgetPerPerson?.min ?? null,
-                      max: item.request.budgetPerPerson?.max ?? null,
-                    },
+                    ...fromDecisionRequest(item.request),
+                    requestText: "",
                   });
+                  draft.setRunId(null);
                   draft.setOrigin(null);
                   navigate("/map");
                 }}
@@ -131,38 +130,57 @@ export function Detail() {
   const { runId } = useParams(),
     [params] = useSearchParams(),
     [error, setError] = useState(""),
-    [feedback, setFeedback] = useState(""),
-    [savedLocally, setSaved] = useState(false),
-    [busy, setBusy] = useState(false),
-    [key] = useState(() => crypto.randomUUID());
+    [busy, setBusy] = useState(false);
+  const choiceKey = useRef<{ candidateId: string; key: string } | null>(null);
   const query = useQuery({
     queryKey: ["run", runId],
-    queryFn: () => request<Run>("/decision-runs/" + runId, undefined, "GET", undefined, undefined, runSchema),
+    queryFn: ({ signal }) =>
+      request<Run>(
+        "/decision-runs/" + runId,
+        undefined,
+        "GET",
+        undefined,
+        signal,
+        runSchema,
+      ),
     retry: false,
   });
-  const run = query.data,
+  const sessionId = query.data?.discoverySessionId;
+  useEffect(() => {
+    if (query.error instanceof ApiError && query.error.code === "RUN_SUPERSEDED" && sessionId)
+      void refreshCurrentRecommendation(client, sessionId).catch(() => undefined);
+  }, [query.error, sessionId, client]);
+  const run = query.error || (runId && isDiscardedRun(client, runId)) ? undefined : query.data,
     place =
       run?.places?.find((p) => p.id === params.get("place")) ??
       run?.places?.[0];
   const saved =
-    savedLocally ||
-    !!(
-      place?.candidateId && run?.chosenCandidateIds?.includes(place.candidateId)
-    );
+    !!place?.candidateId && run?.choice?.candidateId === place.candidateId;
   const save = async () => {
-    if (!place?.candidateId) return;
+    if (!place?.candidateId || saved) return;
     setBusy(true);
+    setError("");
     try {
+      if (choiceKey.current?.candidateId !== place.candidateId)
+        choiceKey.current = {
+          candidateId: place.candidateId,
+          key: crypto.randomUUID(),
+        };
       await request(
         "/place-choices",
-        { candidateId: place.candidateId, feedback },
+        { candidateId: place.candidateId },
         "POST",
-        key,
+        choiceKey.current.key,
       );
-      await client.invalidateQueries({ queryKey: ["history"] });
-      setSaved(true);
+      choiceKey.current = null;
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["history"] }),
+        client.invalidateQueries({ queryKey: ["run"] }),
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
+      if (e instanceof ApiError && [404, 409].includes(e.status) && run)
+        await refreshCurrentRecommendation(client, run.discoverySessionId).catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -185,6 +203,9 @@ export function Detail() {
       ) : place && run ? (
         <>
           <h2 className="detail-name">{place.name}</h2>
+          {run.warnings.map((warning) => (
+            <p className="warning-text" role="status" key={warning}>{warning}</p>
+          ))}
           <p className="muted">
             {place.cuisineTypes.join(" · ")} ·{" "}
             {place.averageCost
@@ -202,29 +223,21 @@ export function Detail() {
           </p>
           <p className="reason">{place.reason}</p>
           <p>
-            距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}，实际道路距离可能更长。
+            距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}
+            ，实际道路距离可能更长。
           </p>
           {place.warnings?.map((w) => (
             <p className="warning-text" key={w}>
               {w}
             </p>
           ))}
-          {!saved && (
-            <>
-              <label className="field-label">
-                这次选择的想法（可选）
-                <textarea
-                  rows={2}
-                  maxLength={300}
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                />
-              </label>
-              <Button className="primary-full" disabled={busy} onClick={save}>
-                保存这次选择
-              </Button>
-            </>
-          )}
+          <Button
+            className="primary-full"
+            disabled={busy || saved}
+            onClick={save}
+          >
+            {saved ? "已选这家" : "选这家"}
+          </Button>
           {navigation && (
             <a
               className="navigation-button"
