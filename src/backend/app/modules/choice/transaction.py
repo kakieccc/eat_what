@@ -59,8 +59,7 @@ class ChoiceTransaction:
         )
         if choice is not None:
             if choice.place_candidate_id != candidate.id:
-                choice.place_candidate_id = candidate.id
-                choice.selected_at = now()
+                raise AppError("SELECTION_COMPLETED", "本次选餐已结束，请开始新的选餐", 409)
             return choice.id
         choice = PlaceChoice(
             user_id=self.user_id,

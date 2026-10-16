@@ -5,25 +5,37 @@ from app.core.errors import AppError
 from app.modules.decision.rules.policies import eligible
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
+from app.modules.decision.workflow.nodes.common import places as state_places
 from app.modules.decision.workflow.nodes.common import serialized
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
+
+CANDIDATE_LIMIT = 10
+SEARCH_LIMIT = 8
 
 
 def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
     async def search(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
         keywords = list(dict.fromkeys(state.get("search_keywords", [])))[:5] or [""]
-        queue = [(word, 1) for word in keywords]
-        unique: dict[str, Place] = {}
-        kept: list[Place] = []
-        summary: dict[str, int] = {}
-        calls = 0
-        failures = 0
+        if "search_queue" in state:
+            queue = list(state["search_queue"])
+            fallback_used = state["search_fallback_used"]
+        else:
+            queue = [(word, 1) for word in keywords]
+            fallback_used = keywords == [""]
+        unique: dict[str, Place] = {p.id: p for p in state_places(state)}
+        seen = set(state.get("search_seen_ids", []))
+        seen.update(unique)
+        summary = dict(state.get("filter_summary", {}))
+        calls = summary.get("searchRequests", 0)
+        failures = summary.get("searchFailures", 0)
         last_error: AppError | None = None
-        fallback_used = keywords == [""]
-        while queue and calls < 8:
+        if not queue and len(unique) < CANDIDATE_LIMIT and not fallback_used:
+            queue.append(("", 1))
+            fallback_used = True
+        while queue and calls < SEARCH_LIMIT:
             word, page = queue.pop(0)
             calls += 1
             try:
@@ -44,24 +56,35 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
                 failures += 1
                 last_error = error
                 batch = []
-            unique.update((p.id, p) for p in batch)
-            kept, summary = eligible(list(unique.values()), request, state.get("excluded", []))
+            fresh = []
+            for place in batch:
+                if place.id not in seen:
+                    seen.add(place.id)
+                    fresh.append(place)
+            kept, counts = eligible(fresh, request, state.get("excluded", []))
+            unique.update((p.id, p) for p in kept)
+            for key, count in counts.items():
+                summary[key] = summary.get(key, 0) + count
             if len(batch) == 25:
                 queue.append((word, page + 1))
-            if not queue and len(kept) < 10 and not fallback_used:
+            if not queue and len(unique) < CANDIDATE_LIMIT and not fallback_used:
                 queue.append(("", 1))
                 fallback_used = True
             # Give each search direction its first page before stopping.
-            if len(kept) >= 10 and calls >= len(keywords):
+            if len(unique) >= CANDIDATE_LIMIT and calls >= len(keywords):
                 break
         if failures == calls and last_error is not None:
             raise last_error
         summary.update(
-            retrieved=len(unique),
+            retrieved=len(seen),
             searchRequests=calls,
             searchFailures=failures,
-            searchBudgetExhausted=int(bool(queue) and calls == 8),
+            searchBudgetExhausted=int(bool(queue) and calls >= SEARCH_LIMIT),
         )
-        return {"places": serialized(kept), "filter_summary": summary}
+        return {
+            "places": serialized(list(unique.values())), "filter_summary": summary,
+            "search_queue": queue, "search_seen_ids": list(seen),
+            "search_fallback_used": fallback_used,
+        }
 
     return search

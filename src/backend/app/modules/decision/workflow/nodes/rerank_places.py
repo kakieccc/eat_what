@@ -12,9 +12,9 @@ def build(llm: FoodDecisionLlm) -> Callable[[State], Awaitable[State]]:
         ranked = await llm.rerank(
             candidates,
             DecisionRequest.model_validate(state["request"]),
+            DecisionIntent.model_validate(state["intent"]),
             state.get("action", ""),
             state.get("old_cuisines", []),
-            DecisionIntent.model_validate(state["intent"]) if state.get("intent") else None,
         )
         return {
             "places": serialized(ranked),

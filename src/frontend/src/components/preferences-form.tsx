@@ -1,15 +1,12 @@
-import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { SlidersHorizontal } from "lucide-react";
 import {
   preferencesSchema,
   cuisines,
-  isSearchRadius,
   type Preferences,
-  type PreferencesSnapshot,
 } from "../lib/schemas";
-import { formatDistance } from "../lib/utils";
 import { RadiusOptions } from "./radius-options";
 import { Button } from "./ui/button";
 import {
@@ -23,45 +20,64 @@ import {
 export function PreferencesForm({
   initial,
   onSubmit,
+  onDraftChange,
   label,
   busy = false,
   personal = false,
 }: {
-  initial: PreferencesSnapshot;
+  initial: Preferences;
   onSubmit: (value: Preferences) => void | Promise<void>;
+  onDraftChange?: (value: Preferences) => void;
   label: string;
   busy?: boolean;
   personal?: boolean;
 }) {
   const [advanced, setAdvanced] = useState(false);
+  const [foodInputs, setFoodInputs] = useState(() => ({
+    preferredFoods: initial.preferredFoods.join("，"),
+    allowedFoods: initial.allowedFoods.join("，"),
+    excludedFoods: initial.excludedFoods.join("，"),
+    softPreferences: initial.softPreferences.join("，"),
+  }));
   const {
+    control,
     register,
     setError,
     clearErrors,
     handleSubmit,
     watch,
+    subscribe,
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<Preferences, unknown, Preferences>({
     resolver: zodResolver(preferencesSchema),
-    defaultValues: {
-      ...initial,
-      radiusMeters: isSearchRadius(initial.radiusMeters)
-        ? initial.radiusMeters
-        : undefined,
-    },
+    defaultValues: initial,
   });
+  useEffect(() => {
+    if (!onDraftChange) return;
+    return subscribe({
+      formState: { values: true },
+      callback: ({ values }) => onDraftChange(values),
+    });
+  }, [subscribe, onDraftChange]);
   const radius = watch("radiusMeters"),
     chosen = watch("preferredFoods"),
     excluded = watch("excludedFoods");
-  const toggle = (field: "preferredFoods" | "excludedFoods", item: string) => {
-    const current = watch(field);
+  const setFoodInput = (field: keyof typeof foodInputs, text: string) => {
+    setFoodInputs((current) => ({ ...current, [field]: text }));
     setValue(
       field,
-      current.includes(item)
+      text.split(/[,，]/).map((value) => value.trim()).filter(Boolean),
+      { shouldValidate: true, shouldDirty: true },
+    );
+  };
+  const toggle = (field: "preferredFoods" | "excludedFoods" | "softPreferences", item: string) => {
+    const current = watch(field);
+    setFoodInput(
+      field,
+      (current.includes(item)
         ? current.filter((c) => c !== item)
-        : [...current, item],
-      { shouldValidate: true },
+        : [...current, item]).join("，"),
     );
   };
   return (
@@ -145,12 +161,6 @@ export function PreferencesForm({
           </p>
         )}
         <p className="muted">以确认位置为中心的直线范围。</p>
-        {!isSearchRadius(initial.radiusMeters) && !isSearchRadius(radius) && (
-          <p className="warning-text">
-            旧记录的半径为 {formatDistance(initial.radiusMeters)}
-            ，请重新选择搜索范围。
-          </p>
-        )}
       </fieldset>
       <fieldset>
         <legend>今天想吃什么</legend>
@@ -158,7 +168,7 @@ export function PreferencesForm({
           <button
             type="button"
             aria-pressed={!chosen.length}
-            onClick={() => setValue("preferredFoods", [])}
+            onClick={() => setFoodInput("preferredFoods", "")}
           >
             不限
           </button>
@@ -221,19 +231,9 @@ export function PreferencesForm({
                 <input
                   aria-label={label}
                   name={field}
-                  defaultValue={watch(field).join("，")}
-                  key={watch(field).join("，")}
+                  value={foodInputs[field]}
                   placeholder="用逗号分隔，可填写菜系或菜品"
-                  onBlur={(e) => {
-                    setValue(
-                      field,
-                      e.target.value
-                        .split(/[,，]/)
-                        .map((v) => v.trim())
-                        .filter(Boolean),
-                      { shouldValidate: true },
-                    );
-                  }}
+                  onChange={(event) => setFoodInput(field, event.target.value)}
                 />
                 {errors[field] && (
                   <span className="error" role="alert">
@@ -246,11 +246,19 @@ export function PreferencesForm({
               <>
                 <label className="field-label">
                   用餐人数
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    {...register("partySize", { valueAsNumber: true })}
+                  <Controller
+                    name="partySize"
+                    control={control}
+                    render={({ field }) => (
+                      <input
+                        {...field}
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={Number.isNaN(field.value) ? "" : field.value}
+                        onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                      />
+                    )}
                   />
                 </label>
                 <label className="field-label">
@@ -282,14 +290,7 @@ export function PreferencesForm({
                     type="button"
                     key={tag}
                     aria-pressed={watch("softPreferences").includes(tag)}
-                    onClick={() =>
-                      setValue(
-                        "softPreferences",
-                        watch("softPreferences").includes(tag)
-                          ? watch("softPreferences").filter((t) => t !== tag)
-                          : [...watch("softPreferences"), tag],
-                      )
-                    }
+                    onClick={() => toggle("softPreferences", tag)}
                   >
                     {tag}
                   </button>

@@ -4,19 +4,19 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import {
   defaults,
   originSchema,
-  preferencesSnapshotSchema,
+  preferencesDraftSchema,
   type Origin,
-  type PreferencesSnapshot,
+  type Preferences,
 } from "./schemas";
 interface Draft {
   ownerId: string | null;
   hasDraft: boolean;
   origin: Origin | null;
-  preferences: PreferencesSnapshot;
+  preferences: Preferences;
   runId: string | null;
   setOwnerId: (ownerId: string) => void;
   setOrigin: (origin: Origin | null) => void;
-  setPreferences: (preferences: PreferencesSnapshot) => void;
+  setPreferences: (preferences: Preferences) => void;
   setRunId: (runId: string | null) => void;
   reset: () => void;
 }
@@ -26,7 +26,7 @@ function recoverDraft(value: unknown) {
     value && typeof value === "object"
       ? (value as Record<string, unknown>)
       : {};
-  const preferences = preferencesSnapshotSchema.safeParse(stored.preferences);
+  const preferences = preferencesDraftSchema.safeParse(stored.preferences);
   const origin = originSchema.safeParse(stored.origin);
   return {
     ownerId: typeof stored.ownerId === "string" && stored.ownerId ? stored.ownerId : null,
@@ -48,7 +48,7 @@ export const useDraft = create<Draft>()(
       setOrigin: (origin) => set({ origin }),
       setPreferences: (preferences) =>
         set({
-          preferences: preferencesSnapshotSchema.parse(preferences),
+          preferences: preferencesDraftSchema.parse(preferences),
           hasDraft: true,
         }),
       setRunId: (runId) => set({ runId }),

@@ -23,6 +23,8 @@ export function requireCurrentSession(version: number, signal?: AbortSignal) {
     throw new DOMException("Request is no longer current", "AbortError");
 }
 export function errorMessage(code: string, message?: string) {
+  if (code === "SELECTION_COMPLETED")
+    return "本次选餐已结束，请开始新的选餐。";
   if (code === "ALLERGY_REQUIREMENT_UNVERIFIABLE")
     return "当前餐厅数据无法核实配料及交叉接触情况，无法按过敏要求推荐，请直接向餐厅确认。";
   if (["RUN_SUPERSEDED", "INVALID_STATE", "IDEMPOTENCY_CONFLICT"].includes(code))

@@ -1,155 +1,184 @@
+## 当前问题
 
-## 优先修复
+### R01〔高〕软偏好被当成必须满足的条件
 
-### 1. [P1 · 已修复] 刷新清空本次条件、位置和当前推荐 ID
+**位置：** [llm.py:106](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/decision/service/llm.py:106)。
 
-- **位置：**[auth.tsx:74](src/frontend/src/lib/auth.tsx#L74)、[store.ts:66](src/frontend/src/lib/store.ts#L66)。
-- **原问题：**重新加载时内存中的账号 ID 丢失，恢复同一账号也清空本次草稿、确认位置和 `runId`。
-- **处理：**草稿持久化 `ownerId`，同账号刷新保留，退出、401 或换账号时清空；临时网络错误保留并允许重试。草稿版本升至 `5`，旧版无账号归属的草稿重置一次。
-- **验证：**新增 12 项回归测试通过；Playwright 桌面/移动视口确认生成中及已完成推荐刷新恢复、条件与位置保留、退出清理，无页面运行时错误。浏览器使用接口和地图测试替身。
-- **边界：**数据库推荐记录没有被删除；已选择记录可从历史找回，带 Run ID 的详情 URL 也能重新查询。账户已保存的偏好仍在数据库中。
+**触发与影响：** 选择“适合聊天”等场景，餐厅缺乏相关信息，评估全部为 `unknown` 时，代码直接剔除餐厅。即使预算、距离均符合，也可能返回空结果。软偏好实际变成了硬筛选。已用合法的未知评估结果复现。
 
-### 2. [P1 · 复现] 旧半径记录无法读取，页面中的兼容提示到达不了
+**建议：** 软偏好用于排序和提示；未知或不匹配的餐厅保留为后备候选。
 
-- **位置：**[preferences/schemas.py:26](src/backend/app/modules/preferences/schemas.py#L26)、[mappers.py:24](src/backend/app/modules/decision/repository/mappers.py#L24)、[schemas.ts:50](src/frontend/src/lib/schemas.ts#L50)。
-- **场景与影响：**数据库历史或偏好包含旧半径 `1500` 时，读取即被当前四档半径模型拒绝，服务端产生校验异常；前端 `runSchema` 同样拒绝。用户看不到 `needsRadiusSelection` 对应的“旧记录请重新选择”提示；一条旧记录也可能阻断整页历史。
-- **建议：**区分历史读取模型与新请求模型；旧值允许展示，新提交必须选合法档位。需要迁移时明确提示用户，不静默改变搜索范围。
+### R02〔高〕读取账户偏好失败后，首页悄悄使用默认条件
 
-### 3. [P2 · 复现] `GET /places` 显式填写合法半径也返回 422
+**位置：** [home.tsx:71](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/home.tsx:71)。
 
-- **位置：**[places/router.py:22](src/backend/app/modules/places/router.py#L22)。
-- **场景与影响：**`?latitude=31&longitude=121&radiusMeters=1000` 返回 422；省略半径反而成功。URL 参数是字符串，整数 `Literal` 不负责将它转换为整数。
-- **建议：**先按整数读取 Query，再使用现有 `require_supported_radius()` 验证；保留四档限制。
+**触发与影响：** 新会话读取 `/preferences` 返回 `503`，首页直接显示默认预算、范围和空排除列表，没有错误提示，并允许提交。用户已保存的“不吃什么”等条件因此缺失。组件测试和浏览器均已复现。
 
-### 4. [P2 · 复现] 一家餐厅详情不存在，整批推荐一起失败
+**建议：** 加载失败显示错误与重试，不把“读取失败”当成“没有保存偏好”。
 
-- **位置：**[filter_places.py:68](src/backend/app/modules/decision/workflow/nodes/filter_places.py#L68)、[provider.py:145](src/backend/app/infrastructure/amap/provider.py#L145)。
-- **场景与影响：**搜索返回候选后，某家详情为空，适配器抛出 `PLACE_NOT_FOUND`；筛选节点没有处理，批量等待取消其他候选，整次推荐失败。
-- **建议：**将该错误作为单个候选失效处理，剔除并记录提示，继续处理其他候选。
+### R03〔高〕保存账户偏好会覆盖本次选餐草稿
 
-### 5. [P2 · 复现] 填好条件后进入选址页，返回时输入消失
+**位置：** [home.tsx:123](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/home.tsx:123)。
 
-- **位置：**[home.tsx:37](src/frontend/src/pages/home.tsx#L37)、[home.tsx:66](src/frontend/src/pages/home.tsx#L66)。
-- **场景与影响：**修改预算或补充说明，再点击地址链接；表单直接卸载，只有点击提交才保存的草稿没有更新。返回首页恢复的是旧条件。
-- **建议：**离开首页选址前保存当前输入；草稿允许暂时不合法，提交时再做完整校验。
+**触发与影响：** 首页填写本次说明、4 人、晚餐，再去偏好页保存，`draft.setPreferences(saved)` 会把本次内容替换为账户偏好加默认值：说明清空、人数变 1、餐段变午餐。旧 `runId` 却仍保留，草稿与已有推荐可能不一致。桌面和手机宽度均已复现。
 
-### 6. [P2 · 复现] 高级条件输入后按 Escape 关闭，内容未保存
+**建议：** 保存账户偏好只更新账户数据与缓存，保留已有本次草稿；在开始新选餐时明确应用默认偏好。
 
-- **位置：**[preferences-form.tsx:221](src/frontend/src/components/preferences-form.tsx#L221)。
-- **场景与影响：**在“只考虑这些食物”等输入框填写内容，直接按 Escape 关闭面板，然后提交。字段只在 `onBlur` 写入表单，关闭卸载没有可靠触发该回调，提交仍是旧值。
-- **建议：**维护输入中的原始文本，并在变更或关闭面板时保存；不要仅靠失焦保存条件。
+### R04〔高〕离开页面后，旧请求仍能跳转和写回状态
 
-### 7. [P2 · 复现] 迟到的 GPS 结果覆盖后来手动选的位置
+**位置：** [home.tsx:47](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/home.tsx:47)、[discover.tsx:170](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/discover.tsx:170)。
 
-- **位置：**[location.tsx:43](src/frontend/src/pages/location.tsx#L43)、[location.tsx:62](src/frontend/src/pages/location.tsx#L62)。
-- **场景与影响：**先点击定位，再手动选点。GPS 完成后才调用 `pick()` 并取得新序号，覆盖用户后来的选择；旧定位失败回调也能覆盖新操作的错误和忙碌状态。
-- **建议：**从发起 GPS 时就记录操作序号；手动选点后，忽略旧 GPS 的成功、失败及结束回调。
+**触发与影响：** 提交推荐后，在响应返回前进入选址页，旧响应仍会写入 `runId` 并强制跳回推荐页。若已发起新的选餐，旧响应还可能覆盖新入口。首页场景已复现；“选这家”请求完成后也存在无页面有效性检查的跳转路径。
 
-### 8. [P2 · 静态] 过时推荐的恢复逻辑无法修复当前详情地址
+**建议：** 为请求绑定页面及草稿代次，离开页面或开始新操作后，忽略旧请求的跳转和过时状态写回。
 
-- **位置：**[history.tsx:148](src/frontend/src/pages/history.tsx#L148)、[recommendations.ts:35](src/frontend/src/lib/recommendations.ts#L35)。
-- **场景与影响：**新标签页打开已被替换的 Run，409 响应没有提供 `sessionId`，前端又没有缓存，恢复逻辑无法启动。已有缓存时，恢复也只更新草稿，详情 URL 仍指向旧 Run，页面继续报错。
-- **建议：**在验证账户归属后提供当前 Run 的恢复信息，成功恢复时替换详情 URL；不要提示用户执行无效的刷新。
+### R05〔中〕请求挂起时，“恢复查询”也无法使用
 
-## 应该修复
+**位置：** [api.ts:74](/Users/kakie/Resource/code/eat_what/src/frontend/src/lib/api.ts:74)、[discover.tsx:155](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/discover.tsx:155)。
 
-### 9. [P2 · 复现] 读取账户偏好失败，首页静默使用默认条件
+**触发与影响：** 普通 `fetch` 没有客户端超时；调整推荐时如果 POST 或 SSE 一直不结束，`busy` 持续为真。25 秒后虽提示可以恢复查询，但“查询结果”按钮仍被禁用，自动查询也因 `!busy` 停止。已用挂起请求及模拟时钟复现。
 
-- **位置：**[home.tsx:71](src/frontend/src/pages/home.tsx#L71)。
-- **场景与影响：**首次打开首页时 `/preferences` 返回 503，页面不显示失败，直接展示默认表单。用户可能以为账户中的排除项、预算已经生效，实际提交的是默认值。
-- **建议：**像偏好页一样展示读取失败和重试入口；使用默认值时明确说明。
+**建议：** 增加请求超时与可中断的恢复入口；恢复查询时退出挂起状态，并按已知会话查询当前结果。
 
-### 10. [P2 · 复现] 服务端偏好更新后，表单仍显示旧值
+### R06〔中〕迟到的 SSE 会取消“另一页已选定”的刷新
 
-- **位置：**[preferences-form.tsx:45](src/frontend/src/components/preferences-form.tsx#L45)、[home.tsx:91](src/frontend/src/pages/home.tsx#L91)。
-- **场景与影响：**页面先显示查询缓存，后台重新获取到更新的偏好；`initial` 已改变，但 `useForm.defaultValues` 只初始化一次。用户继续看到并可能重新保存旧条件。
-- **建议：**新快照到达时同步未编辑的表单；用户正在编辑时保留输入并提示更新，避免直接覆盖。
+**位置：** [discover.tsx:83](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/discover.tsx:83)、[recommendations.ts:60](/Users/kakie/Resource/code/eat_what/src/frontend/src/lib/recommendations.ts:60)。
 
-### 11. [P2 · 静态] 历史详情的“返回推荐”可能跳到另一餐
+**触发与影响：** B 页选定餐厅，A 页收到通知并开始 GET 刷新；此时旧 SSE `result` 到达，调用 `cancelQueries` 取消刷新，并写回尚未选择的快照。A 页继续显示可换批状态，且轮询已关闭。后端仍会拒绝修改，但前端结束状态没有及时生效。已复现该事件顺序。
 
-- **位置：**[history.tsx:192](src/frontend/src/pages/history.tsx#L192)。
-- **场景与影响：**当前草稿是 B 餐，从历史打开 A 餐详情，再点击“返回推荐”；链接只跳到 `/discover`，该页读取全局草稿，因此展示 B 餐。草稿为空时则没有推荐结果。
-- **建议：**返回前明确选定该详情对应的 Run，或让推荐页 URL 携带 Run ID。
+**建议：** 收到选定通知后保留权威刷新，忽略此前的未选定 SSE 快照；不能仅依赖缓存中已经存在 `choice` 才保护结束状态。
 
-### 12. [P2 · 静态] 请求挂起时，“恢复查询”提示无法操作
+### R07〔中〕调整推荐后返回首页，条件退回调整前
 
-- **位置：**[api.ts:72](src/frontend/src/lib/api.ts#L72)、[stream.ts:73](src/frontend/src/lib/stream.ts#L73)、[discover.tsx:155](src/frontend/src/pages/discover.tsx#L155)、[discover.tsx:257](src/frontend/src/pages/discover.tsx#L257)。
-- **场景与影响：**提交请求或 SSE 保持连接但不再返回数据，浏览器端没有截止时间。25 秒后虽显示可以恢复查询，按钮仍因 `busy` 禁用；首页提交也可能一直显示处理中。
-- **建议：**为请求及无进展的订阅设置合理截止时间；允许终止订阅并查询已创建的 Run，不要求用户刷新丢失上下文。
+**位置：** [discover.tsx:120](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/discover.tsx:120)、[discover.tsx:226](/Users/kakie/Resource/code/eat_what/src/frontend/src/pages/discover.tsx:226)。
 
-### 13. [P2 · 复现] 同一账号并发首次保存偏好，其中一次变成 503
+**触发与影响：** 从 2 km 调整为 1 km 后，当前 Run 已是 1 km，但本次草稿未同步。“调整条件”只是跳转首页，表单仍选中 2 km；预算调整也有相同路径。已复现半径场景。
 
-- **位置：**[preferences/repository.py:30](src/backend/app/modules/preferences/repository.py#L30)。
-- **场景与影响：**两个标签页同时首次保存。`FOR UPDATE` 锁不到尚不存在的行，两次读取都为空，随后同时插入；一次触发 `user_id` 唯一约束错误，被统一转成数据库不可用。
-- **建议：**使用 PostgreSQL 冲突更新，或先锁定已存在的用户行；让保存操作的并发语义明确。
+**建议：** 调整入口统一用当前 `run.request` 回填表单，可复用已有 `editRequest`；明确处理旧补充说明，避免再次提交时与新条件冲突。
 
-### 14. [P2 · 静态] 每进程只执行一单，排队时间不计入预算
+### R08〔中〕另一标签页切换账户后，本页身份和请求账户错位
 
-- **位置：**[task/service.py:49](src/backend/app/modules/task/service.py#L49)、[runner.py:87](src/backend/app/modules/decision/service/runner.py#L87)。
-- **场景与影响：**多位用户同时请求时，Worker 等上一单全部执行完才领取下一单。三单各执行约 15 秒，第三单仅排队就约 30 秒；默认 20 秒预算没有限制这段等待。
-- **建议：**先定义排队期限和繁忙提示，再按上游配额决定有限并发。上述时间为代码推导，未经压测。
+**位置：** [auth.tsx:85](/Users/kakie/Resource/code/eat_what/src/frontend/src/lib/auth.tsx:85)、[api.ts:77](/Users/kakie/Resource/code/eat_what/src/frontend/src/lib/api.ts:77)。
 
-### 15. [P2 · 复现] 明知配料限制无法验证，仍先检索和补全详情
+**触发与影响：** 两页登录 A，另一页退出后登录 B，共享 Cookie 已变成 B；本页只在挂载时检查身份，仍保留 A 的用户、缓存、草稿归属和 CSRF。随后 GET 可读取 B 的数据，写操作却带 A 的 CSRF 而返回 `403`。已用会话切换模拟复现身份与返回数据不一致。
 
-- **位置：**[graph.py:77](src/backend/app/modules/decision/workflow/graph.py#L77)、[llm.py:55](src/backend/app/modules/decision/service/llm.py#L55)。
-- **场景与影响：**意图已经包含 `excluded_ingredients`，当前规则最终一定返回空结果，但判断直到重排才执行。此前仍调用高德；高德故障时，请求会先失败，无法得到规则原本要求的正常空结果。
-- **建议：**在进入搜索前完成这项准入判断，直接生成带明确原因的空结果。
+**建议：** 登录、退出和改密时广播会话变化，其他页重新检查 `/auth/me`，再同步身份并清理不属于当前账户的缓存和草稿。
 
-### 16. [P2 · 复现/静态] 金额格式及精度在前后端不一致
+### R09〔中〕首次同时保存偏好，会有一个请求失败
 
-- **位置：**[schemas.ts:28](src/frontend/src/lib/schemas.ts#L28)、[preferences/schemas.py:13](src/backend/app/modules/preferences/schemas.py#L13)、[preferences/models.py:21](src/backend/app/modules/preferences/models.py#L21)。
-- **场景与影响：**前端将 `0x10` 和纯空格判断为合法金额，后端 Decimal 拒绝，用户得到泛化的输入错误（已复现）。双方又允许超过两位小数，而偏好表是 `Numeric(10, 2)`，保存后重新读取会发生舍入（由表结构确定）。
-- **建议：**统一十进制格式、空值和小数精度；在输入边界拒绝或明确规范化，再用于推荐和持久化。
+**位置：** [repository.py:30](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/preferences/repository.py:30)。
 
-### 17. [P2 · 复现] 登录密码没有后端长度上限
+**触发与影响：** 新账户在两个标签页同时保存，双方都查询不到偏好行。`FOR UPDATE` 没有行可锁，随后同时插入，只有一个成功，另一个触发唯一约束错误，被 HTTP 层映射成 `503`。已在独立 PostgreSQL schema 中复现。
 
-- **位置：**[auth/schemas.py:28](src/backend/app/modules/auth/schemas.py#L28)、[auth/schemas.py:45](src/backend/app/modules/auth/schemas.py#L45)。
-- **场景与影响：**注册限制 128 字，但登录密码和修改密码时的旧密码没有上限；百万字符的登录密码仍通过模型校验并可进入密码验证。前端 `maxLength` 不能限制直接调用 API 的请求。
-- **建议：**为所有密码输入设置与注册一致的上限，尽早拒绝无效长输入，减少不必要的资源消耗。
+**建议：** 使用按 `user_id` 冲突更新的原子 upsert，或先锁定始终存在的用户行。
 
-### 18. [P2 · 复现] 任务运行配置允许零和负数
+### R10〔中〕配料限制注定返回空结果，却先执行整套检索
 
-- **位置：**[config.py:23](src/backend/app/core/config.py#L23)。
-- **场景与影响：**`decision_timeout_seconds=-1`、`task_lease_seconds=0`、`task_poll_seconds=0` 均通过配置校验，分别可能导致推荐立即超时、任务租约立即失效、空队列高频轮询数据库。
-- **建议：**像高德超时配置一样添加正数约束；无效配置应在启动时失败。
+**位置：** [llm.py:26](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/decision/service/llm.py:26)、[llm.py:55](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/decision/service/llm.py:55)。
 
-### 19. [P2/P3 · 复现] 时间新旧没有贯穿缓存与详情合并
+**触发与影响：** “不能含香菜”等要求解析到 `excludedIngredients` 后，仍创建任务、搜索并补详情，最后重排直接返回空列表。页面显示“附近没有合适选择”并建议改预算/距离，但真正原因是无法核实配料。已在完整 Graph 中复现先检索、后空结果。
 
-- **位置：**[cache.py:78](src/backend/app/infrastructure/amap/cache.py#L78)、[filter_places.py:43](src/backend/app/modules/decision/workflow/nodes/filter_places.py#L43)。
-- **场景与影响：**并发请求中较旧响应晚写入时，会无条件覆盖较新的缓存及有效期（P2，已复现）。另外，合并新详情虽更新字段时间，却保留原 `data_updated_at`，页面的统一更新时间不能体现这次详情更新（P3，已复现）。
-- **建议：**缓存仅接受不早于已保存采集时间的数据；同时明确统一更新时间的含义，或展示相关字段的采集时间。
+**建议：** 在解析阶段返回明确的“无法核实配料要求”错误，停止无效检索，不自动忽略这项限制。
 
-### 20. [P2 · 复现] 测试和文档入口已失效，无法复验关键业务
+### R11〔中〕表单不会跟随重新读取的账户偏好更新
 
-- **位置：**[pyproject.toml:42](src/backend/pyproject.toml#L42)、[vitest.config.ts:11](src/frontend/vitest.config.ts#L11)、[playwright.config.ts:57](src/frontend/playwright.config.ts#L57)、[README.md:83](README.md#L83)。
-- **场景与影响：**审查时不存在后端 `tests/`、前端 `tests/` 和 `docs/testing.md`。pytest 返回退出码 5，Vitest 返回退出码 1；浏览器启动依赖的 `tests.serve` 也无法导入。README 的工作流/提示词版本仍为 `8/6`，代码实际为 `9/7`。第一条修复已补充前端认证草稿的 12 项回归测试，其他缺失的验证入口仍待恢复。
-- **建议：**恢复当前实现对应的测试与启动夹具，并同步文档。上一轮测试数量不能作为当前工作区的验证结论。
+**位置：** [preferences-form.tsx:36](/Users/kakie/Resource/code/eat_what/src/frontend/src/components/preferences-form.tsx:36)。
 
-## 需要明确的产品取舍
+**触发与影响：** 页面先用旧查询缓存渲染，后台 GET 得到更新偏好后，`initial` 虽改变，但 `useForm.defaultValues` 和 `foodInputs` 都只初始化一次。用户看到旧值，再保存可能覆盖服务器新值。已用更新 `initial` 的组件测试复现。
 
-这些行为有既有设计依据，不按实现错误处理，但会影响操作直觉：
+**建议：** 区分数据刷新与用户编辑；未编辑的表单在来源更新时执行 `reset`，并同步高级文本状态，避免覆盖正在输入的内容。
 
-- **调整推荐会删除已保存的选择和旧结果。**[transaction.py:175](src/backend/app/modules/decision/repository/transaction.py#L175) 在新一轮被接受时执行删除；新推荐失败也不会恢复旧历史。至少在已有选择时说明操作后果。
-- **“更近／更便宜／换口味”是排序偏好。**[policies.py:79](src/backend/app/modules/decision/rules/policies.py#L79) 调整权重，不保证结果一定更近、更便宜或不同。提示语应表达“优先寻找”，避免用户误解为硬性保证。
-- **营业状态、真实道路距离、配料安全没有被验证。**继续保留现有事实边界，不应将未知信息展示成满足条件。
+### R12〔中〕预算格式和小数精度在三层之间不一致
 
-## 本次验证
+**位置：** [schemas.ts:28](/Users/kakie/Resource/code/eat_what/src/frontend/src/lib/schemas.ts:28)、[schemas.py:13](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/preferences/schemas.py:13)、[models.py:21](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/preferences/models.py:21)。
 
-| 检查 | 当前结果 |
-|---|---|
-| Ruff：`ruff check app` | 通过 |
-| mypy：`mypy app` | 通过，126 个源文件 |
-| 前端业务及测试配置类型检查 | 通过；类型检查通过不代表缺失的测试已运行 |
-| ESLint | 通过 |
-| Vite 生产构建 | 通过；主包约 536 kB，有体积提示及依赖注释警告 |
-| 项目 pytest / Vitest | 审查时均无测试文件；第一条修复后新增前端 12 项测试通过，后端测试仍缺失 |
-| 浏览器后端入口 `python -B -m tests.serve` | 失败：模块不存在 |
-| 临时前端自检 | 7 项通过，确认刷新、跳转、Escape、GPS、表单同步、偏好失败和金额格式问题 |
-| 临时后端自检 | 确认半径参数、旧快照、详情失败、配料判断、密码长度、配置和时间处理问题 |
-| 隔离 PostgreSQL 自检 | 确认首次保存偏好的竞态及旧缓存覆盖；仅使用 `food_nav_test` 的临时 schema，已清理 |
+**触发与影响：** 前端把 `0x10`、纯空格当合法金额，后端 Decimal 会拒绝。两端还允许超过两位小数，但数据库只存两位：保存 `20.001–60.999` 时响应仍是原值，重新读取却变成 `20.00–61.00`。这两种差异均已复现。
 
-## 结论与限制
+**建议：** 两端统一普通十进制格式和最多两位小数；保存响应与实际存储值保持一致。
 
-先修复状态恢复、历史兼容、参数转换和单候选异常隔离，再恢复正式回归测试；不需要整体重写业务分层。
+### R13〔中〕登录及旧密码校验缺少长度上限
 
-未检查第三方依赖源码、生成文件和密钥内容；未调用真实高德或 LLM，未执行真实浏览器、性能压测或完整数据库迁移往返。临时自检文件会清理，仅保留本报告；静态确认的并发和交互结论仍应补入正式回归测试。
+**位置：** [schemas.py:29](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/auth/schemas.py:29)。
+
+**触发与影响：** 注册和新密码限制为 128 字符，登录 `password`、改密 `currentPassword` 却不限制长度，超长输入会继续进入密码校验。已确认 10 万字符能通过这两个请求模型，增加了不必要的内存和哈希处理负担。
+
+**建议：** 在请求边界统一密码长度上限，拒绝超过账户密码规格的输入。
+
+### R14〔中〕部分运行参数允许零值和负值
+
+**位置：** [config.py:23](/Users/kakie/Resource/code/eat_what/src/backend/app/core/config.py:23)。
+
+**触发与影响：** LLM 超时、推荐超时、Task 租约和轮询间隔没有正数约束。自检中 `0/-1` 均被接受；可导致请求立即超时、租约立即过期，或 Worker 无等待地反复查库。错误配置未在启动时被拦截。
+
+**建议：** 为这些参数增加正数和合理范围校验，并保证租约长于心跳间隔。
+
+### R15〔中〕较旧的缓存响应能覆盖较新的数据
+
+**位置：** [cache.py:78](/Users/kakie/Resource/code/eat_what/src/backend/app/infrastructure/amap/cache.py:78)。
+
+**触发与影响：** 同一缓存键发生并发未命中，较早采集的响应若较晚写入，会无条件覆盖较新响应及其有效期。已在 PostgreSQL 中验证“先写新、后写旧”会读到旧数据；上层字段合并也无法恢复已被覆盖的缓存。
+
+**建议：** 冲突更新时比较响应的 `fetched_at`，仅允许不旧于现有缓存的数据覆盖。
+
+### R16〔中〕一条坏 POI 会使整页正常餐厅一起失效
+
+**位置：** [schemas.py:45](/Users/kakie/Resource/code/eat_what/src/backend/app/infrastructure/amap/schemas.py:45)、[mappers.py:87](/Users/kakie/Resource/code/eat_what/src/backend/app/infrastructure/amap/mappers.py:87)。
+
+**触发与影响：** 搜索页中某条 POI 坐标为空或字段异常时，整体模型校验或列表转换直接失败，正常记录也被丢弃，可能使整个推荐返回上游错误。已用一条正常 POI 加一条空坐标 POI 复现整批转换失败。
+
+**建议：** 逐条校验、转换 POI，剔除坏记录并记录数量；整体响应结构损坏仍按错误处理。
+
+### R17〔中〕任务恢复后，已消耗的执行预算被重新发放
+
+**位置：** [runner.py:87](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/decision/service/runner.py:87)、[repository.py:112](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/task/repository.py:112)。
+
+**触发与影响：** 节点检查点只保存 State，没有累计执行耗时；`run.duration_ms` 在任务完成时才增加。进程中断后恢复仍只扣除意图解析耗时，重新获得后台预算。已在 PostgreSQL 中复现：预算 80 ms，先执行 50 ms 后中断，恢复再执行 50 ms 仍正常完成。
+
+**建议：** 在检查点持久化累计耗时或剩余预算，恢复时扣除；预算已耗尽则直接结束任务。
+
+### R18〔中〕真实验收入口失效，用例还在验证已取消的改选规则
+
+**位置：** [playwright.config.ts:57](/Users/kakie/Resource/code/eat_what/src/frontend/playwright.config.ts:57)、[app.live.spec.ts:247](/Users/kakie/Resource/code/eat_what/src/frontend/e2e/app.live.spec.ts:247)。
+
+**触发与影响：** E2E 启动命令依赖不存在的 `tests.serve`，实际执行报 `No module named tests.serve`。即使补齐入口，用例仍查找已删除的“已选这家”“返回推荐”，并要求改选第二家，与“选定即结束”冲突。另有 README 引用不存在的 `docs/testing.md`、`pytest -m live` 收集不到用例、`ref.md` 保留旧改选规则及旧版本号。
+
+**建议：** 修复独立测试服务入口，更新结束规则的真实流程用例，并同步测试说明及设计文档，移除无效命令。
+
+### R19〔低〕部分畸形历史游标会返回 500
+
+**位置：** [repository.py:34](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/history/repository.py:34)。
+
+**触发与影响：** 游标解码为 `[有效时间, 123]` 时，`UUID(123)` 抛出未捕获的 `AttributeError`，落入 500 处理，而不是预期的 `400 INVALID_CURSOR`。已复现仓储异常路径。
+
+**建议：** 先验证解码结果的结构和字段类型，再校验时间及 UUID；所有无效游标统一返回输入错误。
+
+### R20〔低／容量限制〕默认 Worker 串行执行，没有排队等待上限
+
+**位置：** [service.py:29](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/task/service.py:29)、[runner.py:78](/Users/kakie/Resource/code/eat_what/src/backend/app/modules/decision/service/runner.py:78)。
+
+**触发与影响：** 默认单进程只有一个 Worker，每次等待当前任务执行完才领取下一个。入队等待不计入推荐执行预算，页面也未区分排队和执行。假设 3 个后台任务各需 15 秒，第 3 个约 45 秒后才结束；这是代码路径推演，未做真实服务压测。
+
+**建议：** 先显示排队状态并设置最长等待；有并发需求时再增加受限的执行并发，继续遵守上游配额。
+
+## 本轮验证
+
+| 检查 | 结果 |
+| --- | --- |
+| 后端 pytest 默认测试 | 61 通过，12 项集成测试默认排除 |
+| PostgreSQL 集成测试 | 独立 `food_nav_test` 中 12 通过，临时 schema 已清理 |
+| Ruff / mypy | 通过；mypy 检查 126 个源文件 |
+| 前端 Vitest | 73 通过 |
+| 业务及测试 TypeScript / ESLint / Vite build | 全部通过；构建仍有已有的主包大于 500 kB 和 Zod 注释警告 |
+| 后端定向自检 | 11 组确认，包括实际数据库并发、金额精度、缓存覆盖及恢复预算 |
+| 临时前端自检 | 10 项通过，确认表单、导航、账户切换和 SSE 时序问题 |
+| 浏览器复核 | Playwright，桌面 1280×900、手机宽度 390×844；复现 R02、R03，无运行时异常或框架错误遮罩，无手机横向溢出 |
+| 验收入口检查 | `tests.serve` 缺失；`pytest -m live --collect-only` 无用例，均已记入 R18 |
+| 源码保护 | 校验 167 个源码、测试及迁移文件，本轮未改动；项目交付仅重写本报告 |
+
+浏览器测试路径为：首页读取偏好失败 → 显示默认表单；首页编辑本次条件 → 保存账户偏好 → 返回首页确认草稿被清空。使用响应模拟，控制台唯一 HTTP 错误为预期注入的 `503`。当前未提供 Browser 插件，采用 Playwright（`Browser plugin not available`）。
+
+临时复现脚本与截图位于 `/private/tmp/eat-what-review-20261016/`，未加入项目。现有测试通过不代表上述问题已修复；定向自检是确认缺陷的证据。
+
+## 未覆盖范围
+
+未调用真实高德或 LLM，未进行生产压力测试、超大密码哈希压测、Safari 或真实手机 GPS 验证。上游真实数据质量、响应时间及实际并发容量仍需单独验证。

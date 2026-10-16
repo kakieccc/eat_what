@@ -17,6 +17,9 @@ export function Location() {
     [busy, setBusy] = useState(false),
     sequence = useRef(0);
   useEffect(() => {
+    return () => { sequence.current += 1; };
+  }, []);
+  useEffect(() => {
     if (keywords.trim().length < 2) {
       setTips([]);
       return;
@@ -60,13 +63,17 @@ export function Location() {
     }
   };
   const gps = async () => {
+    const seq = ++sequence.current;
     setBusy(true);
     setError("");
     try {
-      await pick(await locate());
+      const point = await locate();
+      if (seq === sequence.current) await pick(point);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "定位失败");
-      setBusy(false);
+      if (seq === sequence.current) {
+        setError(e instanceof Error ? e.message : "定位失败");
+        setBusy(false);
+      }
     }
   };
   return (

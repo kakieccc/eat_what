@@ -77,20 +77,23 @@ class DecisionRepository:
             selected_candidate = (
                 await session.get(PlaceCandidate, chosen.place_candidate_id) if chosen else None
             )
+            warnings = []
+            if run.filter_summary.get("searchFailures"):
+                warnings.append("部分搜索暂不可用，候选餐厅可能不完整。")
+            if run.filter_summary.get("detailFailures"):
+                warnings.append("部分餐厅详情获取失败，已剔除并尝试补充其他餐厅。")
+                if run.status == "completed" and len(candidates) < 3:
+                    warnings.append(f"本次仅获得 {len(candidates)} 家有效推荐，可调整条件后重试。")
             return DecisionRunResponse(
                 decision_run_id=run.id,
                 discovery_session_id=run.discovery_session_id,
                 status=run.status,
-                request=request_for_run(run, discovery),
+                request=request_for_run(run),
                 places=[place_from_candidate(candidate) for candidate in candidates],
-                intent=DecisionIntent.model_validate(run.intent) if run.intent else None,
-                original_request=DecisionRequest.model_validate(run.original_request)
-                if run.original_request
-                else None,
+                intent=DecisionIntent.model_validate(run.intent),
+                original_request=DecisionRequest.model_validate(run.original_request),
                 filter_summary={key: count for key, count in run.filter_summary.items()},
-                warnings=["部分搜索或详情暂不可用，推荐信息不完整。"]
-                if any(run.filter_summary.get(key, 0) for key in ("searchFailures", "detailFailures"))
-                else [],
+                warnings=warnings,
                 choice=ChoiceSnapshot(
                     id=chosen.id,
                     candidate_id=chosen.place_candidate_id,

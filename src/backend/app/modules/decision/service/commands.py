@@ -68,28 +68,21 @@ class DecisionCommandService:
         started = time.monotonic()
         if parent_id:
             parent_run = await self.repository.read_for_user(user_id, parent_id)
+            if parent_run.choice is not None:
+                raise AppError("SELECTION_COMPLETED", "本次选餐已结束，请开始新的选餐", 409)
             if parent_run.status != ("failed" if retry else "completed"):
                 raise AppError("INVALID_STATE", "请求冲突", 409)
             request = parent_run.request
             if refinement:
                 request = apply_refinement(request, refinement, [p.id for p in parent_run.places])
-            original = parent_run.original_request or parent_run.request
+            original = parent_run.original_request
             safety = parent_run.intent
-            if safety is None or not {"allergies", "excluded_ingredients"} <= safety.model_fields_set:
-                # Legacy intents did not distinguish ingredient and allergy requirements.
-                try:
-                    async with asyncio.timeout(self.timeout_seconds):
-                        safety = await self.llm.parse_intent(request)
-                except TimeoutError:
-                    raise AppError("DECISION_TIMEOUT", "本次处理超时，请重试", 504, True) from None
             intent = DecisionIntent(
                 effective_request=request,
                 excluded_ingredients=safety.excluded_ingredients,
                 allergies=safety.allergies,
-                search_keywords=parent_run.intent.search_keywords if parent_run.intent else [],
-                unhandled_requirements=parent_run.intent.unhandled_requirements
-                if parent_run.intent
-                else [],
+                search_keywords=safety.search_keywords,
+                unhandled_requirements=safety.unhandled_requirements,
             )
             if refinement and refinement.action == "differentCuisine":
                 # Search all restaurant categories while ranking against the previous cuisines.

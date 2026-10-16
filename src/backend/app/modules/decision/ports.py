@@ -84,8 +84,8 @@ class FoodDecisionLlm(Protocol):
         self,
         places: list[Place],
         preferences: DecisionRequest,
+        intent: DecisionIntent,
         action: str = "",
         old_cuisines: list[str] | None = None,
-        intent: DecisionIntent | None = None,
     ) -> list[Place]: ...
     async def explain(self, places: list[Place]) -> list[Place]: ...

@@ -45,14 +45,14 @@ class DecisionLlmService:
         self,
         places: list[Place],
         preferences: DecisionRequest,
+        intent: DecisionIntent,
         action: str = "",
         old_cuisines: list[str] | None = None,
-        intent: DecisionIntent | None = None,
     ) -> list[Place]:
-        if intent and intent.allergies:
+        if intent.allergies:
             raise AppError("ALLERGY_REQUIREMENT_UNVERIFIABLE", "当前数据无法核实过敏要求", 422)
         # POI data has no menu or ingredient evidence; never infer ingredient absence.
-        if intent and intent.excluded_ingredients:
+        if intent.excluded_ingredients:
             return []
         result = await self.provider.structured(
             Ranking,

@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   useInfiniteQuery,
@@ -9,7 +8,7 @@ import { ArrowLeft, ArrowUpRight, ClipboardList, MapPin } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { ApiError, request } from "../lib/api";
-import { isDiscardedRun, refreshCurrentRecommendation } from "../lib/recommendations";
+import { isDiscardedRun } from "../lib/recommendations";
 import { useDraft } from "../lib/store";
 import {
   fromDecisionRequest,
@@ -19,7 +18,7 @@ import {
   type Run,
 } from "../lib/schemas";
 import { formatDistance, navigationHref } from "../lib/utils";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 type HistoryData = {
   items: {
     id: string;
@@ -126,12 +125,9 @@ export function History() {
   );
 }
 export function Detail() {
-  const client = useQueryClient();
-  const { runId } = useParams(),
-    [params] = useSearchParams(),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
-  const choiceKey = useRef<{ candidateId: string; key: string } | null>(null);
+  const client = useQueryClient(),
+    draft = useDraft();
+  const { runId } = useParams();
   const query = useQuery({
     queryKey: ["run", runId],
     queryFn: ({ signal }) =>
@@ -145,51 +141,16 @@ export function Detail() {
       ),
     retry: false,
   });
-  const sessionId = query.data?.discoverySessionId;
-  useEffect(() => {
-    if (query.error instanceof ApiError && query.error.code === "RUN_SUPERSEDED" && sessionId)
-      void refreshCurrentRecommendation(client, sessionId).catch(() => undefined);
-  }, [query.error, sessionId, client]);
   const run = query.error || (runId && isDiscardedRun(client, runId)) ? undefined : query.data,
-    place =
-      run?.places?.find((p) => p.id === params.get("place")) ??
-      run?.places?.[0];
-  const saved =
-    !!place?.candidateId && run?.choice?.candidateId === place.candidateId;
-  const save = async () => {
-    if (!place?.candidateId || saved) return;
-    setBusy(true);
-    setError("");
-    try {
-      if (choiceKey.current?.candidateId !== place.candidateId)
-        choiceKey.current = {
-          candidateId: place.candidateId,
-          key: crypto.randomUUID(),
-        };
-      await request(
-        "/place-choices",
-        { candidateId: place.candidateId },
-        "POST",
-        choiceKey.current.key,
-      );
-      choiceKey.current = null;
-      await Promise.all([
-        client.invalidateQueries({ queryKey: ["history"] }),
-        client.invalidateQueries({ queryKey: ["run"] }),
-      ]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "保存失败");
-      if (e instanceof ApiError && [404, 409].includes(e.status) && run)
-        await refreshCurrentRecommendation(client, run.discoverySessionId).catch(() => undefined);
-    } finally {
-      setBusy(false);
-    }
-  };
+    place = run?.choice
+      ? run.places.find((p) => p.candidateId === run.choice?.candidateId)
+      : undefined;
+  const superseded = query.error instanceof ApiError && query.error.code === "RUN_SUPERSEDED";
   const navigation = navigationHref(place?.navigationUrl);
   return (
     <>
       <header className="compact-heading">
-        <Link to="/discover" aria-label="返回推荐">
+        <Link to="/history" aria-label="返回历史">
           <ArrowLeft />
         </Link>
         <h1>用餐决策详情</h1>
@@ -197,9 +158,10 @@ export function Detail() {
       {query.isPending ? (
         <p>正在读取这次选择…</p>
       ) : query.isError ? (
-        <p className="error" role="alert">
-          {query.error.message}
-        </p>
+        <div className="error" role="alert">
+          <p>{superseded ? "这批推荐已被替换，请从历史查看已完成的选餐，或返回首页重新选餐。" : query.error.message}</p>
+          {superseded && <Link to="/history">查看历史</Link>}
+        </div>
       ) : place && run ? (
         <>
           <h2 className="detail-name">{place.name}</h2>
@@ -231,13 +193,9 @@ export function Detail() {
               {w}
             </p>
           ))}
-          <Button
-            className="primary-full"
-            disabled={busy || saved}
-            onClick={save}
-          >
-            {saved ? "已选这家" : "选这家"}
-          </Button>
+          <p role="status" className="footnote">
+            本次选餐已结束，选择已保存，可以在历史中回看。
+          </p>
           {navigation && (
             <a
               className="navigation-button"
@@ -249,11 +207,9 @@ export function Detail() {
               <ArrowUpRight size={18} />
             </a>
           )}
-          {saved && (
-            <p role="status" className="footnote">
-              选择已保存，可以在历史中回看。
-            </p>
-          )}
+          <Button variant="outline" asChild>
+            <Link to="/" onClick={() => draft.setRunId(null)}>开始新的选餐</Link>
+          </Button>
           <p className="data-source">
             来源：高德地图 ·{" "}
             {new Date(place.dataUpdatedAt).toLocaleString("zh-CN", {
@@ -267,11 +223,6 @@ export function Detail() {
           <h2>尚未选择餐厅</h2>
           <Link to="/">去选一餐</Link>
         </section>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
       )}
     </>
   );

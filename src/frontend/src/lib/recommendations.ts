@@ -40,11 +40,29 @@ export async function refreshCurrentRecommendation(client: QueryClient, sessionI
   useDraft.getState().setRunId(current.decisionRunId);
 }
 
+export async function completeSelection(client: QueryClient, runId: string) {
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel(channelName);
+    channel.postMessage({ type: "selectionCompleted", runId });
+    channel.close();
+  }
+  await Promise.all([
+    client.invalidateQueries({ queryKey: ["run", runId] }),
+    client.invalidateQueries({ queryKey: ["history"] }),
+  ]);
+}
+
 export function watchRecommendations(client: QueryClient) {
   if (typeof BroadcastChannel === "undefined") return () => {};
   const channel = new BroadcastChannel(channelName);
   channel.onmessage = (event: MessageEvent<unknown>) => {
     const data = event.data;
+    if (data && typeof data === "object" && "type" in data && data.type === "selectionCompleted" &&
+        "runId" in data && typeof data.runId === "string") {
+      void client.invalidateQueries({ queryKey: ["run", data.runId] });
+      void client.invalidateQueries({ queryKey: ["history"] });
+      return;
+    }
     if (!data || typeof data !== "object" || !("previousId" in data) || !("runId" in data) ||
         typeof data.previousId !== "string" || typeof data.runId !== "string" ||
         data.previousId === data.runId) return;

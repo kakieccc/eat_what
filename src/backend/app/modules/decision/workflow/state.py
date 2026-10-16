@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 PROMPT_VERSION = "7"
 
 
@@ -19,6 +19,9 @@ class DecisionState(TypedDict, total=False):
     action: str
     intent: dict[str, Any]
     search_keywords: list[str]
+    search_queue: list[tuple[str, int]]
+    search_seen_ids: list[str]
+    search_fallback_used: bool
     next_node: str
     filter_summary: dict[str, int]
     already_completed: bool

@@ -8,7 +8,7 @@ import { useDraft } from "../lib/store";
 import { useAuth } from "../lib/auth";
 import { configError, request } from "../lib/api";
 import {
-  preferencesSnapshotSchema,
+  preferencesSchema,
   type Preferences,
   defaults,
   runSchema,
@@ -28,7 +28,7 @@ export function Home() {
         undefined,
         undefined,
         storedPreferencesSchema,
-      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p })),
+      ).then((p) => preferencesSchema.parse({ ...defaults, ...p })),
     enabled: !draft.hasDraft && !configError,
     retry: false,
   });
@@ -78,6 +78,7 @@ export function Home() {
               : (saved.data ?? draft.preferences)
           }
           onSubmit={submit}
+          onDraftChange={draft.setPreferences}
           label="帮我选一家"
         />
       )}
@@ -98,7 +99,7 @@ export function Profile() {
         undefined,
         undefined,
         storedPreferencesSchema,
-      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p })),
+      ).then((p) => preferencesSchema.parse({ ...defaults, ...p })),
     retry: false,
   });
   const client = useQueryClient(),
@@ -130,7 +131,7 @@ export function Profile() {
         undefined,
         undefined,
         storedPreferencesSchema,
-      ).then((p) => preferencesSnapshotSchema.parse({ ...defaults, ...p }));
+      ).then((p) => preferencesSchema.parse({ ...defaults, ...p }));
       client.setQueryData(["preferences"], saved);
       draft.setPreferences(saved);
       setNotice("偏好已保存，下次选餐时会使用这些条件。");

@@ -86,7 +86,7 @@ class DecisionTransaction:
         return ParentSnapshot(
             status=run.status,
             session_id=discovery.id,
-            request=request_for_run(run, discovery),
+            request=request_for_run(run),
             excluded_place_keys=list(run.excluded_place_keys),
             previous_place_keys=[candidate.place_key for candidate in candidates],
             place_snapshots=[dict(candidate.place_snapshot) for candidate in candidates],
@@ -173,6 +173,10 @@ class DecisionTransaction:
         return list(discovery.seen_place_keys) if discovery else []
 
     async def _discard_results(self, run_id: str, session_id: str) -> None:
+        if await self.session.scalar(
+            select(PlaceChoice.id).where(PlaceChoice.discovery_session_id == session_id)
+        ):
+            raise AppError("SELECTION_COMPLETED", "本次选餐已结束，请开始新的选餐", 409)
         candidate_ids = select(PlaceCandidate.id.cast(String)).where(PlaceCandidate.decision_run_id == run_id)
         await self.session.execute(
             update(IdempotencyRecord).where(
@@ -181,7 +185,6 @@ class DecisionTransaction:
                 IdempotencyRecord.response_body["candidateId"].astext.in_(candidate_ids),
             ).values(response_body={"superseded": True})
         )
-        await self.session.execute(delete(PlaceChoice).where(PlaceChoice.discovery_session_id == session_id))
         await self.session.execute(delete(PlaceCandidate).where(PlaceCandidate.decision_run_id == run_id))
         task_ids = select(Task.id).where(Task.decision_run_id == run_id)
         # Revoke leases before removing checkpoints/events; late workers cannot repopulate them.

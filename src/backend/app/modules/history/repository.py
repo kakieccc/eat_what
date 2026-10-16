@@ -64,7 +64,7 @@ class HistoryRepository:
                 HistoryItem(
                     id=row.id,
                     created_at=choice.selected_at,
-                    request=request_for_run(run, row),
+                    request=request_for_run(run),
                     choice=HistoryChoice(
                         id=choice.id,
                         place=place_from_candidate(candidate),

@@ -20,8 +20,8 @@ class DecisionRequest(Model):
 
 
 class FoodSafety(Model):
-    excluded_ingredients: list[Annotated[str, Field(min_length=1, max_length=30)]] = Field(default_factory=list, max_length=12)
-    allergies: list[Annotated[str, Field(min_length=1, max_length=30)]] = Field(default_factory=list, max_length=12)
+    excluded_ingredients: list[Annotated[str, Field(min_length=1, max_length=30)]] = Field(max_length=12)
+    allergies: list[Annotated[str, Field(min_length=1, max_length=30)]] = Field(max_length=12)
 
 
 class Intent(FoodSafety):
@@ -70,8 +70,8 @@ class DecisionRunResponse(Model):
     status: Literal["pending", "running", "completed", "failed"]
     request: DecisionRequest
     places: list[Place] = Field(default_factory=list)
-    intent: DecisionIntent | None = None
-    original_request: DecisionRequest | None = None
+    intent: DecisionIntent
+    original_request: DecisionRequest
     filter_summary: dict[str, int] = Field(default_factory=dict)
     suggestions: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

@@ -8,7 +8,7 @@ export function RadiusOptions({
   disabled = false,
   invalid = false,
 }: {
-  value: SearchRadius | undefined;
+  value: SearchRadius;
   onChange: (value: SearchRadius) => void;
   disabled?: boolean;
   invalid?: boolean;
@@ -17,7 +17,7 @@ export function RadiusOptions({
     <ToggleGroup.Root
       type="single"
       className="four-options"
-      value={value === undefined ? "" : String(value)}
+      value={String(value)}
       onValueChange={(next) => {
         const radius = radiusValues.find((item) => String(item) === next);
         if (radius !== undefined) onChange(radius);

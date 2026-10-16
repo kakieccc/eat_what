@@ -34,7 +34,7 @@ const money = z
     "请输入 0–10000 的金额",
   )
   .nullable();
-export const preferencesSnapshotSchema = z
+export const preferencesSchema = z
   .object({
     budgetPerPerson: z
       .object({ min: money, max: money })
@@ -66,9 +66,18 @@ export const preferencesSnapshotSchema = z
       ),
     { message: "偏好或限定的食物不能同时被排除", path: ["excludedFoods"] },
   );
-export type PreferencesSnapshot = z.infer<typeof preferencesSnapshotSchema>;
-export const preferencesSchema = preferencesSnapshotSchema;
 export type Preferences = z.infer<typeof preferencesSchema>;
+export const preferencesDraftSchema = z.object({
+  ...preferencesSchema.shape,
+  budgetPerPerson: z.object({ min: z.string().nullable(), max: z.string().nullable() }),
+  preferredFoods: z.array(z.string()),
+  allowedFoods: z.array(z.string()),
+  excludedFoods: z.array(z.string()),
+  softPreferences: z.array(z.string()),
+  // A cleared number input becomes NaN, which JSON stores as null.
+  partySize: z.number().or(z.nan()).nullable().transform((value) => value ?? Number.NaN),
+  requestText: z.string(),
+});
 export const storedPreferencesSchema = z.object(preferencesSchema.shape).pick({
   budgetPerPerson: true,
   radiusMeters: true,
@@ -84,7 +93,6 @@ export const decisionRequestSchema = z.object({
   partySize: z.number().int().min(1).max(20),
   requestText: z.string().max(300),
 });
-export const decisionRequestSnapshotSchema = decisionRequestSchema;
 export type DecisionRequest = z.infer<typeof decisionRequestSchema>;
 export function toDecisionRequest(
   p: Preferences,
@@ -149,30 +157,26 @@ export const choiceSchema = z.object({
   decisionRunId: z.string(),
   selectedAt: z.string(),
 });
-export const runSchema = z
-  .object({
-    decisionRunId: z.string(),
-    discoverySessionId: z.string(),
-    status: z.enum(["pending", "running", "completed", "failed"]),
-    places: z.array(placeSchema),
-    request: decisionRequestSnapshotSchema,
-    originalRequest: decisionRequestSchema.nullable(),
-    intent: z
-      .object({
-        effectiveRequest: decisionRequestSchema,
-        searchKeywords: z.array(z.string()),
-        unhandledRequirements: z.array(z.string()),
-        excludedIngredients: z.array(z.string()).default([]),
-        allergies: z.array(z.string()).default([]),
-      })
-      .nullable(),
-    filterSummary: z.record(z.string(), z.number()),
-    suggestions: z.array(z.string()),
-    warnings: z.array(z.string()).default([]),
-    errorCode: z.string().nullable(),
-    choice: choiceSchema.nullable(),
-  })
-  .passthrough();
+export const runSchema = z.object({
+  decisionRunId: z.string(),
+  discoverySessionId: z.string(),
+  status: z.enum(["pending", "running", "completed", "failed"]),
+  places: z.array(placeSchema),
+  request: decisionRequestSchema,
+  originalRequest: decisionRequestSchema,
+  intent: z.object({
+    effectiveRequest: decisionRequestSchema,
+    searchKeywords: z.array(z.string()),
+    unhandledRequirements: z.array(z.string()),
+    excludedIngredients: z.array(z.string()),
+    allergies: z.array(z.string()),
+  }),
+  filterSummary: z.record(z.string(), z.number()),
+  suggestions: z.array(z.string()),
+  warnings: z.array(z.string()),
+  errorCode: z.string().nullable(),
+  choice: choiceSchema.nullable(),
+});
 export type Run = z.infer<typeof runSchema>;
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({

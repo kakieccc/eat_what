@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, get_args
 
 from fastapi import APIRouter, Query
 
@@ -20,7 +20,9 @@ async def list_places(
     latitude: Annotated[float, Query(ge=-90, le=90)],
     longitude: Annotated[float, Query(ge=-180, le=180)],
     address: Annotated[str, Query(max_length=200)] = "",
-    radius_meters: Annotated[SearchRadius, Query(alias="radiusMeters")] = 2000,
+    radius_meters: Annotated[
+        int, Query(alias="radiusMeters", json_schema_extra={"enum": list(get_args(SearchRadius))})
+    ] = 2000,
     limit: Annotated[int, Query(ge=1, le=30)] = 20,
     keywords: Annotated[list[str] | None, Query(max_length=5)] = None,
 ) -> Envelope[list[Place]]:

@@ -7,6 +7,8 @@ from app.modules.decision.rules.policies import eligible, score_places
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.nodes.common import places, serialized
+from app.modules.decision.workflow.nodes.search_places import CANDIDATE_LIMIT
+from app.modules.decision.workflow.nodes.search_places import build as build_search
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
@@ -47,50 +49,58 @@ def merge_detail(place: Place, detail: Place) -> Place:
 
 
 def build(service: PlaceService) -> Callable[[State], Awaitable[State]]:
+    search_more = build_search(service)
+
     async def filtering(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
-        ordered = score_places(
-            places(state),
-            request,
-            state.get("action", ""),
-            state.get("recent", []),
-            state.get("old_cuisines", []),
-        )[:10]
-        if not ordered:
-            return {"places": []}
 
-        async def detail_or_search(p: Place) -> tuple[Place, bool]:
+        def ranked(candidates: list[Place]) -> list[Place]:
+            return score_places(
+                candidates, request, state.get("action", ""),
+                state.get("recent", []), state.get("old_cuisines", []),
+            )
+
+        async def detail_or_none(p: Place) -> Place | None:
             try:
                 detail = await service.detail(
                     p.external_id, request.origin, deadline=execution_deadline.get()
                 )
-                return merge_detail(p, detail), False
+                return merge_detail(p, detail)
             except AppError as error:
                 deadline = execution_deadline.get()
                 if deadline is not None and asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError from error
-                if error.code not in {"AMAP_UNAVAILABLE", "AMAP_SCHEMA_ERROR", "AMAP_INVALID_RESPONSE"}:
+                if error.code not in {"PLACE_NOT_FOUND", "AMAP_UNAVAILABLE", "AMAP_SCHEMA_ERROR", "AMAP_INVALID_RESPONSE"}:
                     raise
-                return p.model_copy(update={"warnings": list(dict.fromkeys([
-                    *p.warnings, "详情暂不可用，使用搜索信息",
-                ]))}), True
+                return None
 
-        details = await gather_cancel_on_error(*(detail_or_search(p) for p in ordered))
-        merged = [p for p, _ in details]
-        kept, counts = eligible(merged, request, state.get("excluded", []))
-        summary = {
-            **state.get("filter_summary", {}), "detailRequests": len(details),
-            "detailFailures": sum(failed for _, failed in details),
-        }
-        for key, count in counts.items():
-            summary[key] = summary.get(key, 0) + count
-        rescored = score_places(
-            kept,
-            request,
-            state.get("action", ""),
-            state.get("recent", []),
-            state.get("old_cuisines", []),
-        )
-        return {"places": serialized(rescored), "filter_summary": summary}
+        current = state.copy()
+        pending = ranked(places(state))
+        checked: set[str] = set()
+        kept: list[Place] = []
+        summary = dict(state.get("filter_summary", {}))
+        while len(kept) < CANDIDATE_LIMIT:
+            if not pending:
+                more = await search_more({
+                    **current, "places": serialized(kept), "filter_summary": summary,
+                })
+                current.update(more)
+                summary = more["filter_summary"]
+                pending = ranked([p for p in places(more) if p.id not in checked])
+                if not pending:
+                    break
+            batch_size = CANDIDATE_LIMIT - len(kept)
+            batch, pending = pending[:batch_size], pending[batch_size:]
+            checked.update(p.id for p in batch)
+            details = await gather_cancel_on_error(*(detail_or_none(p) for p in batch))
+            valid, counts = eligible(
+                [p for p in details if p is not None], request, state.get("excluded", [])
+            )
+            kept.extend(valid)
+            summary["detailRequests"] = summary.get("detailRequests", 0) + len(details)
+            summary["detailFailures"] = summary.get("detailFailures", 0) + sum(p is None for p in details)
+            for key, count in counts.items():
+                summary[key] = summary.get(key, 0) + count
+        return {**current, "places": serialized(ranked(kept)), "filter_summary": summary}
 
     return filtering
