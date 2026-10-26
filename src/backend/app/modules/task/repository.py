@@ -10,9 +10,11 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
+from app.modules.decision.models import DecisionRun
+from app.modules.decision.workflow.events import RunFailed, WorkflowError
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.models import Task, TaskEvent, TaskStatus, TaskStep
-from app.modules.task.types import EventRecord, TaskClaim, TaskSnapshot
+from app.modules.task.types import EventRecord, TaskClaim
 
 
 def json_payload(value: BaseModel | dict[str, Any]) -> dict[str, object]:
@@ -22,8 +24,33 @@ def json_payload(value: BaseModel | dict[str, Any]) -> dict[str, object]:
 
 
 class TaskStore:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, sessions: async_sessionmaker[AsyncSession], queue_timeout_seconds: float = 60) -> None:
         self.sessions = sessions
+        self.queue_timeout_seconds = queue_timeout_seconds
+
+    async def expire_queued(self) -> None:
+        current = now()
+        async with self.sessions.begin() as session:
+            tasks = (await session.scalars(select(Task).where(
+                Task.status == TaskStatus.queued.value, Task.started_at.is_(None),
+                Task.created_at <= current - timedelta(seconds=self.queue_timeout_seconds),
+            ).with_for_update(skip_locked=True))).all()
+            for task in tasks:
+                task.status = TaskStatus.failed.value
+                task.phase = "failed"
+                task.error_code = "QUEUE_TIMEOUT"
+                task.error_message = "排队超过等待时限，请重新推荐。"
+                task.completed_at = current
+                run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
+                if run is not None and run.status == "pending":
+                    run.status = "failed"
+                    run.error_code = task.error_code
+                    run.completed_at = current
+                sequence = await session.scalar(select(func.max(TaskEvent.sequence)).where(TaskEvent.task_id == task.id))
+                session.add(TaskEvent(
+                    task_id=task.id, sequence=(sequence or 0) + 1, event_type="runFailed",
+                    payload=RunFailed(error=WorkflowError(code=task.error_code, message=task.error_message, retryable=True)).model_dump(mode="json"),
+                ))
 
     async def claim(self, lease_seconds: int) -> TaskClaim | None:
         current = now()
@@ -49,7 +76,10 @@ class TaskStore:
 
             selected = await session.scalar(
                 select(Task)
-                .where(Task.status == TaskStatus.queued.value)
+                .where(
+                    Task.status == TaskStatus.queued.value,
+                    (Task.started_at.is_not(None)) | (Task.created_at > current - timedelta(seconds=self.queue_timeout_seconds)),
+                )
                 .order_by(Task.created_at, Task.id)
                 .limit(1)
                 .with_for_update(skip_locked=True)
@@ -121,6 +151,9 @@ class TaskStore:
             task = await self._owned(session, claim)
             task.state = persisted
             task.phase = phase
+            await session.execute(update(DecisionRun).where(DecisionRun.id == task.decision_run_id).values(
+                duration_ms=func.greatest(DecisionRun.duration_ms, task.elapsed_ms()),
+            ))
             step = await session.scalar(
                 select(TaskStep)
                 .where(TaskStep.task_id == task.id, TaskStep.key == phase)
@@ -173,30 +206,6 @@ class TaskStore:
                     ).all()
                 )
             ]
-
-    async def latest_for_run(self, run_id: str) -> TaskSnapshot | None:
-        async with self.sessions() as session:
-            statement = select(Task).where(Task.decision_run_id == run_id)
-            task = await session.scalar(statement.order_by(Task.created_at.desc(), Task.id.desc()))
-            return TaskSnapshot(id=task.id, status=task.status) if task else None
-
-    async def fail(self, claim: TaskClaim, code: str, message: str) -> bool:
-        async with self.sessions.begin() as session:
-            task = await session.scalar(
-                select(Task)
-                .where(Task.id == claim.task_id, Task.lease_token == claim.lease_token)
-                .with_for_update()
-            )
-            if task is None:
-                return False
-            task.status = TaskStatus.failed.value
-            task.phase = "failed"
-            task.error_code = code
-            task.error_message = message[:500]
-            task.lease_token = None
-            task.lease_until = None
-            task.completed_at = now()
-            return True
 
     async def _owned(self, session: AsyncSession, claim: TaskClaim) -> Task:
         task = await session.scalar(

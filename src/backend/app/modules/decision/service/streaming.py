@@ -29,54 +29,48 @@ class DecisionStreamService:
         self.auth = auth
 
     async def stream(
-        self, user_id: str, run_id: str, request_id: str, token: str | None
+        self, user_id: str, run_id: str, token: str | None
     ) -> AsyncIterator[DecisionEvent]:
         current_task_id: str | None = None
         last_sequence = 0
-        last_heartbeat = time.monotonic()
+        last_heartbeat = float("-inf")
         while True:
-            current = await self.auth.authenticate(token)
-            if current.user.id != user_id:
-                return
             try:
-                await self.queries.get_for_user(user_id, run_id)
-            except AppError as error:
-                if error.code != "RUN_SUPERSEDED":
-                    raise
-                yield RunFailed(error=WorkflowError(
-                    code="RUN_SUPERSEDED", message="请求冲突", retryable=False,
-                ))
-                return
-            task = await self.tasks.latest_for_run(run_id)
-            if task is not None and task.id != current_task_id:
-                current_task_id = task.id
-                last_sequence = 0
-            if current_task_id:
-                for row in await self.tasks.events(current_task_id, last_sequence):
-                    event = EVENT_ADAPTER.validate_python(row.payload)
-                    last_sequence = row.sequence
-                    if event.type == "result":
-                        data = await self.queries.get_for_user(user_id, run_id)
-                        yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
-                    else:
-                        yield event
-                    if event.type in {"result", "runFailed"}:
-                        return
-            if task is None or task.status in {"succeeded", "failed"}:
-                data = await self.queries.get_for_user(user_id, run_id)
-                if data.status == "completed":
+                current = await self.auth.authenticate(token)
+                if current.user.id != user_id:
+                    return
+                status = await self.queries.stream_status(user_id, run_id)
+                if status.task_id != current_task_id:
+                    current_task_id = status.task_id
+                    last_sequence = 0
+                if current_task_id:
+                    for row in await self.tasks.events(current_task_id, last_sequence):
+                        event = EVENT_ADAPTER.validate_python(row.payload)
+                        last_sequence = row.sequence
+                        if event.type == "result":
+                            data = await self.queries.get_for_user(user_id, run_id)
+                            yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
+                        else:
+                            yield event
+                        if event.type in {"result", "runFailed"}:
+                            return
+                if status.status == "completed":
+                    data = await self.queries.get_for_user(user_id, run_id)
                     yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
                     return
-                if data.status == "failed":
-                    yield RunFailed(
-                        error=WorkflowError(
-                            code=data.error_code or "RUN_FAILED",
-                            message="推荐未完成，请检查服务或重试",
-                            retryable=True,
-                        )
-                    )
+                if status.status == "failed":
+                    yield RunFailed(error=WorkflowError(
+                        code=status.error_code or "RUN_FAILED",
+                        message="排队超过等待时限，请重新推荐。" if status.error_code == "QUEUE_TIMEOUT" else "推荐未完成，请检查服务或重试",
+                        retryable=True,
+                    ))
                     return
+            except AppError as error:
+                yield RunFailed(error=WorkflowError(
+                    code=error.code, message=error.message, retryable=error.retryable,
+                ))
+                return
             if time.monotonic() - last_heartbeat >= 15:
                 yield Heartbeat(timestamp=now())
                 last_heartbeat = time.monotonic()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)

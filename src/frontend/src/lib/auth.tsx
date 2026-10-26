@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { advanceSession, getSessionVersion, configError, endpoint, request, setCsrfToken, setUnauthorizedHandler } from "./api";
 import { safeSessionStorage } from "./storage";
 import { useDraft } from "./store";
+import { notifyAuthChanged, watchAuthChanges } from "./auth-sync";
 
 export type User = {
   id: string;
@@ -47,9 +48,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(becomeAnonymous);
     return () => setUnauthorizedHandler(null);
   }, [becomeAnonymous]);
-  const loadSession = useCallback(async (signal?: AbortSignal) => {
+  const loadSession = useCallback(async (signal?: AbortSignal, reset = false) => {
     const version = advanceSession();
     const stale = () => signal?.aborted || version !== getSessionVersion();
+    if (reset) clearLocal();
     if (configError) {
       setState("error");
       return;
@@ -87,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void loadSession(controller.signal);
     return () => { controller.abort(); advanceSession(); };
   }, [loadSession]);
+  useEffect(() => watchAuthChanges(() => { void loadSession(undefined, true); }), [loadSession]);
 
   const establish = (data: AuthPayload) => {
     clearLocal();
@@ -98,14 +101,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string) => {
     const version = advanceSession();
     const data = await request<AuthPayload>("/auth/login", { username, password });
-    if (version === getSessionVersion()) establish(data);
+    if (version === getSessionVersion()) {
+      establish(data);
+      notifyAuthChanged();
+    }
   };
   const register = async (username: string, password: string, displayName: string) => {
     const version = advanceSession();
     const data = await request<AuthPayload>("/auth/register", {
       username, password, displayName: displayName.trim(),
     });
-    if (version === getSessionVersion()) establish(data);
+    if (version === getSessionVersion()) {
+      establish(data);
+      notifyAuthChanged();
+    }
   };
   const updateName = async (displayName: string) => {
     const version = getSessionVersion();
@@ -117,12 +126,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await request<{ loggedOut: boolean }>("/auth/change-password", {
       currentPassword, newPassword,
     });
-    if (version === getSessionVersion()) becomeAnonymous();
+    if (version === getSessionVersion()) {
+      becomeAnonymous();
+      notifyAuthChanged();
+    }
   };
   const logout = async () => {
     const version = advanceSession();
     await request<{ loggedOut: boolean }>("/auth/logout", {});
-    if (version === getSessionVersion()) becomeAnonymous();
+    if (version === getSessionVersion()) {
+      becomeAnonymous();
+      notifyAuthChanged();
+    }
   };
   return <Context.Provider value={{
     state, user, retrySession: () => loadSession(),

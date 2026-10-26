@@ -16,9 +16,10 @@ from app.modules.decision.models import (
     PlaceCandidate,
 )
 from app.modules.decision.ports import IdempotencySnapshot, ParentSnapshot
-from app.modules.decision.repository.mappers import request_for_run, session_values
-from app.modules.decision.schemas import DecisionIntent, DecisionRequest
+from app.modules.decision.repository.mappers import session_values
+from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
+from app.modules.preferences.schemas import PrefillSnapshot
 from app.modules.task.models import Task, TaskEvent, TaskStatus
 
 
@@ -69,6 +70,8 @@ class DecisionTransaction:
         if discovery.current_run_id != run_id:
             raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
         await self.session.refresh(run, with_for_update=True)
+        if run.workflow_version != str(SCHEMA_VERSION):
+            raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
         return run
 
     async def parent(self, run_id: str) -> ParentSnapshot:
@@ -86,9 +89,7 @@ class DecisionTransaction:
         return ParentSnapshot(
             status=run.status,
             session_id=discovery.id,
-            request=request_for_run(run),
             excluded_place_keys=list(run.excluded_place_keys),
-            previous_place_keys=[candidate.place_key for candidate in candidates],
             place_snapshots=[dict(candidate.place_snapshot) for candidate in candidates],
             retry_state=cast(State, dict((await self.session.scalar(
                 select(Task.state).where(Task.decision_run_id == run.id)
@@ -96,8 +97,11 @@ class DecisionTransaction:
             )) or {})),
         )
 
-    async def create_discovery(self, request: DecisionRequest) -> str:
-        discovery = DiscoverySession(user_id=self.user_id, **session_values(request))
+    async def create_discovery(self, request: DecisionRequest, prefill: PrefillSnapshot) -> str:
+        discovery = DiscoverySession(
+            user_id=self.user_id, prefill_snapshot=prefill.model_dump(mode="json"),
+            **session_values(request),
+        )
         self.session.add(discovery)
         await self.session.flush()
         return discovery.id
@@ -109,11 +113,13 @@ class DecisionTransaction:
         parent_id: str | None,
         excluded: list[str],
         action: str,
+        original: DecisionRequest,
     ) -> str:
         run = DecisionRun(
             discovery_session_id=session_id,
             parent_decision_id=parent_id,
             workflow_version=str(SCHEMA_VERSION),
+            original_request=original.model_dump(mode="json"),
             effective_preferences=request.model_dump(mode="json"),
             excluded_place_keys=excluded,
             refinement_action=action,
@@ -194,15 +200,6 @@ class DecisionTransaction:
         ))
         await self.session.execute(delete(TaskEvent).where(TaskEvent.task_id.in_(task_ids)))
         await self.session.execute(update(DecisionRun).where(DecisionRun.id == run_id).values(
-            original_request={}, intent={}, effective_preferences={}, filter_summary={},
+            original_request={}, effective_preferences={}, filter_summary={},
             excluded_place_keys=[],
         ))
-
-    async def set_intent(
-        self, run_id: str, original: DecisionRequest, intent: DecisionIntent, duration_ms: int
-    ) -> None:
-        run = await self._run(run_id)
-        run.original_request = original.model_dump(mode="json")
-        run.intent = intent.model_dump(mode="json")
-        run.duration_ms = duration_ms
-        run.llm_used = True

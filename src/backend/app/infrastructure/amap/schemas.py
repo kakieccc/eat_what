@@ -43,7 +43,7 @@ class RawPlace(Raw):
 
 
 class PlaceResponse(RawResponse):
-    pois: list[RawPlace]
+    pois: list[JsonValue]
 
 
 class RawRegeocode(Raw):

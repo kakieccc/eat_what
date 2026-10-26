@@ -9,12 +9,10 @@ from typing import cast
 from app.core.errors import AppError
 from app.modules.decision.ports import DecisionRepository, FoodDecisionLlm
 from app.modules.decision.schemas import DecisionRequest
-from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.events import (
     DecisionEvent,
     NodeCompleted,
-    ResultEvent,
     RunFailed,
     RunStarted,
     WorkflowError,
@@ -22,6 +20,7 @@ from app.modules.decision.workflow.events import (
 from app.modules.decision.workflow.graph import build_graph
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.service import PlaceService
+from app.modules.preferences.rules import require_allowed_food_limit
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.ports import TaskStore
 from app.modules.task.types import TaskClaim
@@ -34,7 +33,6 @@ class DecisionRunner:
         self,
         repository: DecisionRepository,
         tasks: TaskStore,
-        queries: DecisionQueryService,
         places: PlaceService,
         llm: FoodDecisionLlm,
         lease_seconds: int,
@@ -42,7 +40,6 @@ class DecisionRunner:
     ) -> None:
         self.repository = repository
         self.tasks = tasks
-        self.queries = queries
         self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
         self.graph = build_graph(places, llm, self.emit, self.step_started, self.save_state)
@@ -76,25 +73,27 @@ class DecisionRunner:
             await self.tasks.renew(claim, self.lease_seconds)
 
     async def _execute_task(self, claim: TaskClaim) -> None:
-        started = time.monotonic()
         task_id, run_id, request_id, state, elapsed_ms = await self.repository.prepare(claim)
         if state.get("already_completed"):
             return
         if state.get("schema_version") != SCHEMA_VERSION:
             raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
-        DecisionRequest.model_validate(state["request"])
-        await self.emit(task_id, RunStarted(request_id=request_id, decision_run_id=run_id))
+        request = DecisionRequest.model_validate(state["request"])
+        require_allowed_food_limit(request.preferences.allowed_foods)
         remaining = self.timeout_seconds - elapsed_ms / 1000
-        deadline = asyncio.get_running_loop().time() + max(0.001, remaining)
+        if remaining <= 0:
+            raise TimeoutError
+        started = time.monotonic()
+        deadline = asyncio.get_running_loop().time() + remaining
         token = execution_deadline.set(deadline)
         try:
             async with asyncio.timeout_at(deadline):
+                await self.emit(task_id, RunStarted(request_id=request_id, decision_run_id=run_id))
                 result = cast(State, await self.graph.ainvoke(state))
         finally:
             execution_deadline.reset(token)
-        duration = int((time.monotonic() - started) * 1000)
+        duration = elapsed_ms + int((time.monotonic() - started) * 1000)
         await self.repository.complete(claim, result, run_id, duration)
-        await self.emit(task_id, ResultEvent(data=await self.queries.response_json(run_id)))
 
     async def step_started(self, state: State, name: str) -> None:
         await self.tasks.start_step(

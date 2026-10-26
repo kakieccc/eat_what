@@ -76,10 +76,10 @@ def build_graph(
 
     definitions = [
         ("search_places", "正在搜索附近餐厅", search_places.build(places)),
-        ("filter_places", "正在筛选符合条件的地点", filter_places.build(places)),
+        ("filter_places", "正在筛选符合条件的地点", filter_places.build(places, llm)),
         ("rerank_places", "正在结合偏好排序", rerank_places.build(llm)),
         ("select_diverse", "正在挑选不同选择", select_diverse.select),
-        ("generate_explanations", "正在生成推荐理由", generate_explanations.build(places, llm)),
+        ("generate_explanations", "正在整理推荐理由", generate_explanations.generate),
     ]
     for name, label, fn in definitions:
         builder.add_node(name, RunnableLambda(wrapped(name, label, fn)))

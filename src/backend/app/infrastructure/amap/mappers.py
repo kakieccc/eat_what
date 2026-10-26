@@ -1,3 +1,5 @@
+import json
+import logging
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -13,6 +15,8 @@ from app.infrastructure.amap.schemas import (
 from app.modules.location.geometry import distance
 from app.modules.location.schemas import Origin, Point
 from app.modules.places.schemas import Place
+
+log = logging.getLogger("food.amap")
 
 
 def coordinates(value: Point) -> str:
@@ -85,7 +89,16 @@ def place(raw: RawPlace, origin: Point, fetched_at: datetime) -> Place:
 
 
 def places(response: PlaceResponse, origin: Point, fetched_at: datetime) -> list[Place]:
-    return [place(raw, origin, fetched_at) for raw in response.pois]
+    result = []
+    skipped = 0
+    for raw in response.pois:
+        try:
+            result.append(place(RawPlace.model_validate(raw), origin, fetched_at))
+        except (ValueError, TypeError):
+            skipped += 1
+    if skipped:
+        log.warning(json.dumps({"event": "amapPlacesSkipped", "count": skipped}))
+    return result
 
 
 def reverse(response: ReverseResponse, origin: Point) -> Origin:

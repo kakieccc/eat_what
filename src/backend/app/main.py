@@ -11,7 +11,7 @@ from app.core.config import Settings
 
 def create_app() -> FastAPI:
     settings = Settings()
-    app = FastAPI(title="今天吃什么", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="今天吃什么", version="1.0.0", lifespan=lifespan)
     app.state.settings = settings
     register_middlewares(app, settings)
     register_exception_handlers(app)

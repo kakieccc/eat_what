@@ -70,13 +70,27 @@ class AmapCache:
         payload = entry.model_dump(mode="json")
         expires_at = entry.fetched_at + timedelta(seconds=ttl)
         async with self.sessions.begin() as session:
-            await session.execute(
+            inserted = await session.scalar(
                 insert(PlaceCache)
                 .values(
                     cache_key=self.key(operation, params), payload=payload, expires_at=expires_at
                 )
-                .on_conflict_do_update(
-                    index_elements=["cache_key"],
-                    set_={"payload": payload, "expires_at": expires_at, "updated_at": now()},
-                )
+                .on_conflict_do_nothing(index_elements=["cache_key"])
+                .returning(PlaceCache.id)
             )
+            if inserted is not None:
+                return
+            cached = (await session.scalars(
+                select(PlaceCache)
+                .where(PlaceCache.cache_key == self.key(operation, params))
+                .with_for_update()
+            )).one()
+            try:
+                previous = FetchedResponse.model_validate(cached.payload)
+            except ValidationError:
+                previous = None
+            if previous is not None and previous.fetched_at > entry.fetched_at:
+                return
+            cached.payload = payload
+            cached.expires_at = expires_at
+            cached.updated_at = now()

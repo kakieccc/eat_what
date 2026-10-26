@@ -5,7 +5,6 @@ import { Button } from "./ui/button";
 export function PlaceCard({
   place,
   selected,
-  chosen = false,
   onSelect,
   onChoose,
   onExclude,
@@ -13,7 +12,6 @@ export function PlaceCard({
 }: {
   place: Place;
   selected: boolean;
-  chosen?: boolean;
   onSelect: () => void;
   onChoose: () => void;
   onExclude?: () => void;
@@ -64,8 +62,8 @@ export function PlaceCard({
             地点暂无数据
           </Button>
         )}
-        <Button disabled={busy || chosen} onClick={onChoose}>
-          {chosen ? "已选这家" : "选这家"}
+        <Button disabled={busy} onClick={onChoose}>
+          选这家
         </Button>
       </div>
       {onExclude && (

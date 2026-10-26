@@ -17,10 +17,11 @@ from app.modules.decision.models import (
     DiscoverySession,
     PlaceCandidate,
 )
+from app.modules.decision.ports import RunStreamStatus
 from app.modules.decision.repository.mappers import place_from_candidate, request_for_run
 from app.modules.decision.repository.transaction import DecisionTransaction
-from app.modules.decision.schemas import DecisionIntent, DecisionRequest, DecisionRunResponse
-from app.modules.decision.workflow.state import State
+from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse
+from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.schemas import Place
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.models import Task, TaskStatus, TaskStep
@@ -43,20 +44,37 @@ class DecisionRepository:
             raise AppError("NOT_FOUND", "记录不存在", 404)
         return run
 
-    async def read(self, run_id: str) -> DecisionRunResponse:
-        return await self._read(run_id)
+    async def stream_status(self, user_id: str, run_id: str) -> RunStreamStatus:
+        latest_task = select(Task.id).where(Task.decision_run_id == DecisionRun.id).order_by(
+            Task.created_at.desc(), Task.id.desc(),
+        ).limit(1).correlate(DecisionRun).scalar_subquery()
+        selected = select(PlaceChoice.id).where(
+            PlaceChoice.discovery_session_id == DiscoverySession.id,
+        ).correlate(DiscoverySession).exists()
+        async with self.sessions() as session:
+            row = (await session.execute(select(
+                DecisionRun.status, DecisionRun.error_code, DiscoverySession.current_run_id,
+                latest_task, DecisionRun.workflow_version, selected,
+            ).join(DiscoverySession, DecisionRun.discovery_session_id == DiscoverySession.id).where(
+                DecisionRun.id == run_id, DiscoverySession.user_id == user_id,
+            ))).one_or_none()
+        if row is None:
+            raise AppError("NOT_FOUND", "记录不存在", 404)
+        status, error_code, current_run, task_id, version, has_choice = row
+        if current_run != run_id:
+            raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
+        if version != str(SCHEMA_VERSION) and not has_choice:
+            raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
+        return RunStreamStatus(status=status, error_code=error_code, task_id=task_id)
 
     async def read_for_user(self, user_id: str, run_id: str) -> DecisionRunResponse:
-        return await self._read(run_id, user_id)
-
-    async def _read(self, run_id: str, user_id: str | None = None) -> DecisionRunResponse:
         async with self.sessions.begin() as session:
             run = await self._run(session, run_id)
             discovery = await session.scalar(
                 select(DiscoverySession).where(DiscoverySession.id == run.discovery_session_id)
                 .with_for_update(read=True)
             )
-            if discovery is None or (user_id is not None and discovery.user_id != user_id):
+            if discovery is None or discovery.user_id != user_id:
                 raise AppError("NOT_FOUND", "发现会话不存在", 404)
             if discovery.current_run_id != run_id:
                 raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
@@ -74,6 +92,8 @@ class DecisionRepository:
                     PlaceChoice.discovery_session_id == run.discovery_session_id
                 )
             )
+            if chosen is None and run.workflow_version != str(SCHEMA_VERSION):
+                raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
             selected_candidate = (
                 await session.get(PlaceCandidate, chosen.place_candidate_id) if chosen else None
             )
@@ -90,7 +110,6 @@ class DecisionRepository:
                 status=run.status,
                 request=request_for_run(run),
                 places=[place_from_candidate(candidate) for candidate in candidates],
-                intent=DecisionIntent.model_validate(run.intent),
                 original_request=DecisionRequest.model_validate(run.original_request),
                 filter_summary={key: count for key, count in run.filter_summary.items()},
                 warnings=warnings,
@@ -141,6 +160,7 @@ class DecisionRepository:
             run.error_code = None
             run.completed_at = None
             task.phase = task.phase or "running"
+            run.duration_ms = max(run.duration_ms, task.elapsed_ms())
             return task.id, run.id, task.request_id, state, run.duration_ms
 
     async def _current_session(self, session: AsyncSession, claim: TaskClaim) -> DiscoverySession:
@@ -188,7 +208,7 @@ class DecisionRepository:
             task.lease_token = None
             task.lease_until = None
             task.completed_at = now()
-            run.duration_ms += duration_ms
+            run.duration_ms = max(run.duration_ms, duration_ms, task.elapsed_ms())
             run.status = "completed"
             run.completed_at = now()
 
@@ -226,6 +246,7 @@ class DecisionRepository:
                 step.completed_at = now()
             run = await session.get(DecisionRun, task.decision_run_id, with_for_update=True)
             if run is not None and run.status != "completed":
+                run.duration_ms = max(run.duration_ms, task.elapsed_ms())
                 run.status = "failed"
                 run.error_code = code
                 run.completed_at = now()
@@ -242,27 +263,7 @@ class DecisionRepository:
                     id=place.candidate_id,
                     decision_run_id=run.id,
                     place_key=place.id,
-                    external_place_id=place.external_id,
-                    name=place.name,
-                    category_code=place.category_code,
-                    category_name=place.category_name,
-                    cuisine_types=place.cuisine_types,
-                    tags=place.tags,
-                    address=place.address,
-                    latitude=place.location.latitude,
-                    longitude=place.location.longitude,
-                    straight_line_distance_meters=place.straight_line_distance_meters,
-                    rating=place.rating,
-                    average_cost=place.average_cost,
-                    opening_hours_text=place.opening_hours_text,
-                    phone=place.phone,
-                    photos=place.photos,
-                    score=place.score,
-                    score_breakdown=place.score_breakdown,
                     rank=rank,
-                    reason=place.reason,
-                    warnings=place.warnings,
-                    navigation_url=place.navigation_url,
                     place_snapshot=place.model_dump(mode="json"),
                 )
             )

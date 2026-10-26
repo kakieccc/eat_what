@@ -12,9 +12,7 @@ class UserProfile(Model):
     created_at: datetime
 
 
-class RegisterRequest(Model):
-    username: str = Field(pattern=r"^[A-Za-z0-9_]{3,32}$")
-    password: str = Field(min_length=8, max_length=128)
+class ProfileUpdateRequest(Model):
     display_name: str = Field(min_length=1, max_length=40)
 
     @field_validator("display_name")
@@ -28,23 +26,16 @@ class RegisterRequest(Model):
 
 class LoginRequest(Model):
     username: str = Field(pattern=r"^[A-Za-z0-9_]{3,32}$")
-    password: str
+    password: str = Field(max_length=128)
 
 
-class ProfileUpdateRequest(Model):
-    display_name: str = Field(min_length=1, max_length=40)
-
-    @field_validator("display_name")
-    @classmethod
-    def trim_name(cls, value: str) -> str:
-        result = value.strip()
-        if not result:
-            raise ValueError("昵称不能为空")
-        return result
+class RegisterRequest(ProfileUpdateRequest):
+    username: str = Field(pattern=r"^[A-Za-z0-9_]{3,32}$")
+    password: str = Field(min_length=8, max_length=128)
 
 
 class ChangePasswordRequest(Model):
-    current_password: str
+    current_password: str = Field(max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
 

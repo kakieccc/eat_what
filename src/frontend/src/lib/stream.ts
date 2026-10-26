@@ -1,5 +1,5 @@
-import { ApiError, endpoint, getCsrfToken, handleUnauthorized, errorMessage, getSessionVersion, requireCurrentSession } from "./api";
-import { runSchema, eventSchema, type DecisionEvent, type Run } from "./schemas";
+import { ApiError, fetchResponse, handleUnauthorized, errorMessage, getSessionVersion, requireCurrentSession } from "./api";
+import { eventSchema, type DecisionEvent } from "./schemas";
 export class SseParser {
   private pending = "";
   constructor(private readonly onEvent: (event: DecisionEvent) => void | boolean) {}
@@ -28,57 +28,15 @@ export class SseParser {
       throw new Error("推荐进度数据不完整，请恢复查询结果");
   }
 }
-export async function stream(
-  collectionPath: string,
-  body: unknown,
-  key: string,
-  signal: AbortSignal,
-  onEvent: (event: DecisionEvent) => void,
-  onAccepted?: (run: Run) => void,
-) {
-  const version = getSessionVersion();
-  const creation = await fetch(endpoint(collectionPath), {
-    method: "POST",
-    signal,
-    credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      "Idempotency-Key": key,
-      "X-Request-ID": crypto.randomUUID(),
-      "X-CSRF-Token": getCsrfToken() ?? "",
-    },
-    body: JSON.stringify(body),
-  });
-  const payload = await creation.json();
-  requireCurrentSession(version, signal);
-  if (!creation.ok || !payload.success) {
-    if (creation.status === 401 && payload.error?.code === "AUTH_REQUIRED")
-      handleUnauthorized();
-    throw new ApiError(errorMessage(payload.error?.code, payload.error?.message), creation.status, payload.error?.code);
-  }
-  const runId = payload.data?.decisionRunId;
-  if (typeof runId !== "string") throw new Error("服务未返回决策记录");
-  if (onAccepted) onAccepted(runSchema.parse(payload.data));
-  onEvent({
-    type: "runStarted",
-    requestId: creation.headers.get("X-Request-ID") ?? "",
-    decisionRunId: runId,
-  });
-
-  await subscribe(runId, signal, onEvent);
-}
-
 export async function subscribe(
   runId: string,
   signal: AbortSignal,
   onEvent: (event: DecisionEvent) => void,
 ) {
   const version = getSessionVersion();
-  const response = await fetch(endpoint(`/decision-runs/${runId}/events`), {
+  const response = await fetchResponse(`/decision-runs/${runId}/events`, {
     method: "GET",
     signal,
-    credentials: "include",
     headers: {
       Accept: "text/event-stream",
       "X-Request-ID": crypto.randomUUID(),
@@ -100,6 +58,10 @@ export async function subscribe(
   const parser = new SseParser((e) => {
     requireCurrentSession(version, signal);
     if (terminal) return false;
+    if (e.type === "runFailed" && e.error.code === "AUTH_REQUIRED") {
+      handleUnauthorized();
+      requireCurrentSession(version, signal);
+    }
     if (["result", "runFailed"].includes(e.type)) terminal = true;
     onEvent(e);
     return !terminal;

@@ -5,7 +5,6 @@ from app.modules.decision.schemas import DecisionRequest
 from app.modules.places.schemas import Place
 
 WEIGHTS = dict(
-    preference_match=0.28,
     distance_cost=0.22,
     budget_match=0.18,
     rating_quality=0.14,
@@ -26,8 +25,6 @@ def eligible(
             reason = "excludedPlace"
         elif p.straight_line_distance_meters > conditions.radius_meters:
             reason = "radius"
-        elif set(p.cuisine_types + p.tags) & set(conditions.excluded_foods):
-            reason = "cuisine"
         elif p.average_cost is not None and (
             (
                 conditions.budget_per_person.max is not None
@@ -59,10 +56,6 @@ def eligible(
                 warnings.append("人均暂无数据，无法确认符合预算")
             if p.rating is None:
                 warnings.append("评分暂无数据")
-            if conditions.allowed_foods and not set(p.cuisine_types + p.tags) & set(
-                conditions.allowed_foods
-            ):
-                warnings.append("食物类型信息不足，无法确认符合限定要求")
             kept.append(p.model_copy(update={"warnings": list(dict.fromkeys(warnings))}))
     return kept, dict(counts)
 
@@ -72,7 +65,6 @@ def score_places(
     pref: DecisionRequest,
     action: str = "",
     recent: list[str] | None = None,
-    old_cuisines: list[str] | None = None,
 ) -> list[Place]:
     conditions = pref.preferences
     weights = WEIGHTS.copy()
@@ -87,14 +79,6 @@ def score_places(
     result = []
     for p in places:
         budget = conditions.budget_per_person
-        match = (
-            100.0
-            if not conditions.preferred_foods
-            or set(p.cuisine_types + p.tags) & set(conditions.preferred_foods)
-            else 30.0
-        )
-        if action == "differentCuisine" and set(p.cuisine_types) & set(old_cuisines or []):
-            match *= 0.3
         budget_score = 40.0
         if p.average_cost is not None:
             budget_score = 100.0
@@ -107,7 +91,6 @@ def score_places(
             0, 100 * (1 - p.straight_line_distance_meters / conditions.radius_meters)
         )
         sub = dict(
-            preference_match=float(match),
             distance_cost=distance_score,
             budget_match=budget_score,
             rating_quality=p.rating * 20 if p.rating is not None else 40,
@@ -125,8 +108,12 @@ def score_places(
         result.append(
             p.model_copy(update={"score": total, "score_breakdown": {**sub, "total": total}})
         )
+    return sort_places(result)
+
+
+def sort_places(places: list[Place]) -> list[Place]:
     return sorted(
-        result,
+        places,
         key=lambda p: (
             -p.score,
             -p.score_breakdown["data_completeness"],
@@ -148,7 +135,7 @@ def diverse(places: list[Place]) -> list[Place]:
             same_cuisine = any(set(p.cuisine_types) & set(s.cuisine_types) for s in selected)
             return places.index(p) + 8 * same_brand + 3 * same_cuisine
 
-        chosen = min(remaining, key=lambda p: (-p.score_breakdown.get("soft_matches", 0), priority(p)))
+        chosen = min(remaining, key=priority)
         selected.append(chosen)
         remaining.remove(chosen)
     return selected

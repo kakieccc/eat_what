@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.concurrency import gather_cancel_on_error
 from app.core.errors import AppError
+from app.modules.decision.ports import FoodDecisionLlm
 from app.modules.decision.rules.policies import eligible, score_places
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
@@ -48,7 +49,7 @@ def merge_detail(place: Place, detail: Place) -> Place:
     return place.model_copy(update=updates)
 
 
-def build(service: PlaceService) -> Callable[[State], Awaitable[State]]:
+def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awaitable[State]]:
     search_more = build_search(service)
 
     async def filtering(state: State) -> State:
@@ -57,7 +58,7 @@ def build(service: PlaceService) -> Callable[[State], Awaitable[State]]:
         def ranked(candidates: list[Place]) -> list[Place]:
             return score_places(
                 candidates, request, state.get("action", ""),
-                state.get("recent", []), state.get("old_cuisines", []),
+                state.get("recent", []),
             )
 
         async def detail_or_none(p: Place) -> Place | None:
@@ -96,7 +97,9 @@ def build(service: PlaceService) -> Callable[[State], Awaitable[State]]:
             valid, counts = eligible(
                 [p for p in details if p is not None], request, state.get("excluded", [])
             )
-            kept.extend(valid)
+            food_valid = await llm.filter_foods(valid, request)
+            counts["foodRequirements"] = len(valid) - len(food_valid)
+            kept.extend(food_valid)
             summary["detailRequests"] = summary.get("detailRequests", 0) + len(details)
             summary["detailFailures"] = summary.get("detailFailures", 0) + sum(p is None for p in details)
             for key, count in counts.items():

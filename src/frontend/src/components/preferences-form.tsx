@@ -5,7 +5,10 @@ import { SlidersHorizontal } from "lucide-react";
 import {
   preferencesSchema,
   cuisines,
+  allowedFoodLimit,
   type Preferences,
+  type AccountPreferences,
+  type LearnableField,
 } from "../lib/schemas";
 import { RadiusOptions } from "./radius-options";
 import { Button } from "./ui/button";
@@ -24,6 +27,7 @@ export function PreferencesForm({
   label,
   busy = false,
   personal = false,
+  memory,
 }: {
   initial: Preferences;
   onSubmit: (value: Preferences) => void | Promise<void>;
@@ -31,13 +35,17 @@ export function PreferencesForm({
   label: string;
   busy?: boolean;
   personal?: boolean;
+  memory?: {
+    sources: AccountPreferences["sources"];
+    overrides: AccountPreferences["overrides"];
+    automatic: LearnableField[];
+    onRestore: (field: LearnableField) => void;
+  };
 }) {
   const [advanced, setAdvanced] = useState(false);
   const [foodInputs, setFoodInputs] = useState(() => ({
-    preferredFoods: initial.preferredFoods.join("，"),
     allowedFoods: initial.allowedFoods.join("，"),
     excludedFoods: initial.excludedFoods.join("，"),
-    softPreferences: initial.softPreferences.join("，"),
   }));
   const {
     control,
@@ -61,7 +69,7 @@ export function PreferencesForm({
     });
   }, [subscribe, onDraftChange]);
   const radius = watch("radiusMeters"),
-    chosen = watch("preferredFoods"),
+    chosen = watch("allowedFoods"),
     excluded = watch("excludedFoods");
   const setFoodInput = (field: keyof typeof foodInputs, text: string) => {
     setFoodInputs((current) => ({ ...current, [field]: text }));
@@ -71,7 +79,7 @@ export function PreferencesForm({
       { shouldValidate: true, shouldDirty: true },
     );
   };
-  const toggle = (field: "preferredFoods" | "excludedFoods" | "softPreferences", item: string) => {
+  const toggle = (field: "allowedFoods" | "excludedFoods", item: string) => {
     const current = watch(field);
     setFoodInput(
       field,
@@ -80,6 +88,19 @@ export function PreferencesForm({
         : [...current, item]).join("，"),
     );
   };
+  const sourceNote = (field: LearnableField) => memory && (
+    <div className="preference-source">
+      <span>{memory.automatic.includes(field) ? "保存后恢复自动学习" :
+        ({ manual: "手动固定", learned: "长期记忆", builtin: "系统默认" })[memory.sources[field]]}</span>
+      {Object.hasOwn(memory.overrides, field) && (
+        <button type="button" className="text-button" disabled={busy || isSubmitting}
+          aria-label={`${({ budgetPerPerson: "预算", radiusMeters: "距离", requestText: "补充说明" })[field]}${memory.automatic.includes(field) ? "取消恢复" : "恢复自动学习"}`}
+          onClick={() => memory.onRestore(field)}>
+          {memory.automatic.includes(field) ? "取消恢复" : "恢复自动学习"}
+        </button>
+      )}
+    </div>
+  );
   return (
     <form
       onChange={() => clearErrors("root")}
@@ -111,11 +132,13 @@ export function PreferencesForm({
         <legend>
           人均预算 <span>元 / 人</span>
         </legend>
+        {sourceNote("budgetPerPerson")}
         <div className="budget-inputs">
           <label className="sr-only" htmlFor="budget-min">
             最低预算
           </label>
           <input
+            disabled={memory?.automatic.includes("budgetPerPerson")}
             id="budget-min"
             inputMode="decimal"
             placeholder="不限"
@@ -126,6 +149,7 @@ export function PreferencesForm({
             最高预算
           </label>
           <input
+            disabled={memory?.automatic.includes("budgetPerPerson")}
             id="budget-max"
             inputMode="decimal"
             placeholder="不限"
@@ -144,6 +168,7 @@ export function PreferencesForm({
       </fieldset>
       <fieldset data-invalid={!!errors.radiusMeters || undefined}>
         <legend>搜索半径</legend>
+        {sourceNote("radiusMeters")}
         <RadiusOptions
           value={radius}
           onChange={(value) =>
@@ -152,7 +177,7 @@ export function PreferencesForm({
               shouldDirty: true,
             })
           }
-          disabled={busy || isSubmitting}
+          disabled={busy || isSubmitting || memory?.automatic.includes("radiusMeters")}
           invalid={!!errors.radiusMeters}
         />
         {errors.radiusMeters && (
@@ -163,12 +188,12 @@ export function PreferencesForm({
         <p className="muted">以确认位置为中心的直线范围。</p>
       </fieldset>
       <fieldset>
-        <legend>今天想吃什么</legend>
+        <legend>限定食物类型（任选其一）</legend>
         <div className="chips">
           <button
             type="button"
             aria-pressed={!chosen.length}
-            onClick={() => setFoodInput("preferredFoods", "")}
+            onClick={() => setFoodInput("allowedFoods", "")}
           >
             不限
           </button>
@@ -177,28 +202,40 @@ export function PreferencesForm({
               type="button"
               key={c}
               aria-pressed={chosen.includes(c)}
-              onClick={() => toggle("preferredFoods", c)}
+              disabled={chosen.length >= allowedFoodLimit && !chosen.includes(c)}
+              onClick={() => toggle("allowedFoods", c)}
             >
               {c}
             </button>
           ))}
         </div>
       </fieldset>
-      {!personal && (
-        <label className="field-label">
-          补充说明 <span>可选</span>
-          <textarea
-            placeholder="想吃热乎的，今天不太想吃面…"
-            rows={3}
-            {...register("requestText")}
-          />
-          {errors.requestText && (
-            <span className="error" role="alert">
-              {errors.requestText.message}
-            </span>
-          )}
-        </label>
-      )}
+      <label className="field-label">
+        自由填写
+        <input
+          aria-label="限定食物类型"
+          value={foodInputs.allowedFoods}
+          placeholder="用逗号分隔，可自由填写菜系或菜品"
+          onChange={(event) => setFoodInput("allowedFoods", event.target.value)}
+        />
+        <span className="muted">最多选择或填写 {allowedFoodLimit} 项，用逗号分隔。</span>
+        {errors.allowedFoods && <span className="error" role="alert">{errors.allowedFoods.message}</span>}
+      </label>
+      <div>
+      {sourceNote("requestText")}
+      <label className="field-label">
+        {personal ? "默认补充说明" : "补充说明"} <span>可选</span>
+        <textarea
+          disabled={memory?.automatic.includes("requestText")}
+          placeholder="想吃热乎的，今天不太想吃面…"
+          rows={3}
+          maxLength={1000}
+          {...register("requestText")}
+        />
+        <span className="muted">仅影响排序；必须满足的条件请在表单中设置。最多 1000 字。</span>
+        {errors.requestText && <span className="error" role="alert">{errors.requestText.message}</span>}
+      </label>
+      </div>
       <Sheet open={advanced} onOpenChange={setAdvanced}>
         <SheetTrigger asChild>
           <Button type="button" variant="ghost" className="advanced">
@@ -213,37 +250,27 @@ export function PreferencesForm({
             <SheetTitle>把这一餐，说得更具体</SheetTitle>
             <SheetDescription>
               {personal
-                ? "保存常用条件，用于下次推荐。"
+                ? "保存常用条件，用于下次开始新的选餐。"
                 : "条件只用于本次推荐，未知数据会明确提示。"}
             </SheetDescription>
           </SheetHeader>
           <div className="sheet-fields">
-            {(
-              [
-                ["preferredFoods", "偏好的食物"],
-                ["allowedFoods", "只考虑这些食物（任选其一）"],
-                ["excludedFoods", "排除的食物"],
-                ["softPreferences", "口味与场景"],
-              ] as const
-            ).map(([field, label]) => (
-              <label className="field-label" key={field}>
-                {label}
-                <input
-                  aria-label={label}
-                  name={field}
-                  value={foodInputs[field]}
-                  placeholder="用逗号分隔，可填写菜系或菜品"
-                  onChange={(event) => setFoodInput(field, event.target.value)}
-                />
-                {errors[field] && (
-                  <span className="error" role="alert">
-                    {errors[field]?.message}
-                  </span>
-                )}
-              </label>
-            ))}
+            <label className="field-label">
+              排除的食物
+              <input
+                aria-label="排除的食物"
+                name="excludedFoods"
+                value={foodInputs.excludedFoods}
+                placeholder="用逗号分隔，可填写菜系或菜品"
+                onChange={(event) => setFoodInput("excludedFoods", event.target.value)}
+              />
+              {errors.excludedFoods && (
+                <span className="error" role="alert">{errors.excludedFoods.message}</span>
+              )}
+            </label>
             {!personal && (
               <>
+                <p className="muted">人数和餐段用于软排序参考；营业时间、座位及接待能力请向餐厅确认。</p>
                 <label className="field-label">
                   用餐人数
                   <Controller
@@ -283,14 +310,13 @@ export function PreferencesForm({
               </>
             )}
             <fieldset>
-              <legend>用餐场景</legend>
+              <legend>口味与场景（添加到补充说明）</legend>
               <div className="chips">
                 {["适合一人食", "适合聊天", "热乎"].map((tag) => (
                   <button
                     type="button"
                     key={tag}
-                    aria-pressed={watch("softPreferences").includes(tag)}
-                    onClick={() => toggle("softPreferences", tag)}
+                    onClick={() => setValue("requestText", [watch("requestText"), tag].filter(Boolean).join("；"), { shouldDirty: true, shouldValidate: true })}
                   >
                     {tag}
                   </button>
@@ -305,7 +331,7 @@ export function PreferencesForm({
                     type="button"
                     key={c}
                     aria-pressed={chosen.includes(c)}
-                    onClick={() => toggle("preferredFoods", c)}
+                    onClick={() => toggle("allowedFoods", c)}
                   >
                     {c}
                   </button>
@@ -338,7 +364,7 @@ export function PreferencesForm({
       )}
       {Object.keys(errors).some((field) => field !== "root") && (
         <p className="error" role="alert">
-          请检查预算上下限、搜索半径及是否有重复排除的菜系。
+          请检查表单中的错误提示后再提交。
         </p>
       )}
       <Button

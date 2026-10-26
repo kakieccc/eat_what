@@ -8,12 +8,6 @@ class TaskClaim:
 
 
 @dataclass(frozen=True)
-class TaskSnapshot:
-    id: str
-    status: str
-
-
-@dataclass(frozen=True)
 class EventRecord:
     sequence: int
     payload: dict[str, object]

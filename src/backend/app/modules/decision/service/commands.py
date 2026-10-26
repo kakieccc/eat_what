@@ -1,29 +1,27 @@
 from __future__ import annotations
 
-import asyncio
-import time
-
 from app.core.errors import AppError
 from app.core.ids import request_hash
-from app.modules.decision.ports import DecisionRepository, FoodDecisionLlm
+from app.modules.decision.ports import DecisionRepository
 from app.modules.decision.rules.refinement import apply_refinement
-from app.modules.decision.schemas import DecisionIntent, DecisionRequest, RefinementRequest
+from app.modules.decision.schemas import DecisionCreateRequest, DecisionRequest, RefinementRequest
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.schemas import Place
+from app.modules.preferences.rules import require_allowed_food_limit
+from app.modules.preferences.schemas import PrefillSnapshot
 
 
 class DecisionCommandService:
-    def __init__(
-        self, repository: DecisionRepository, llm: FoodDecisionLlm, timeout_seconds: float
-    ) -> None:
+    def __init__(self, repository: DecisionRepository) -> None:
         self.repository = repository
-        self.llm = llm
-        self.timeout_seconds = timeout_seconds
 
     async def create(
-        self, user_id: str, request: DecisionRequest, idempotency_key: str, request_id: str
+        self, user_id: str, request: DecisionCreateRequest, idempotency_key: str, request_id: str
     ) -> str:
-        return await self._create(user_id, request, idempotency_key, request_id)
+        return await self._create(
+            user_id, DecisionRequest.model_validate(request.model_dump(exclude={"prefill_snapshot"})),
+            idempotency_key, request_id, prefill=request.prefill_snapshot,
+        )
 
     async def refine(
         self,
@@ -49,6 +47,7 @@ class DecisionCommandService:
         parent_id: str | None = None,
         refinement: RefinementRequest | None = None,
         retry: bool = False,
+        prefill: PrefillSnapshot | None = None,
     ) -> str:
         endpoint = (
             f"decision-runs/{parent_id}/{'retry' if retry else 'refinements'}"
@@ -56,7 +55,8 @@ class DecisionCommandService:
         )
         digest = request_hash(
             refinement.model_dump(mode="json") if refinement
-            else request.model_dump(mode="json") if request else {}
+            else {"request": request.model_dump(mode="json"),
+                  "prefill": prefill.model_dump(mode="json") if prefill else None} if request else {}
         )
         async with self.repository.transaction(user_id, endpoint + key) as tx:
             existing = await tx.idempotency(endpoint, key)
@@ -65,7 +65,6 @@ class DecisionCommandService:
                     raise AppError("IDEMPOTENCY_CONFLICT", "请求冲突", 409)
                 return str(existing.response_body["runId"])
         original = request
-        started = time.monotonic()
         if parent_id:
             parent_run = await self.repository.read_for_user(user_id, parent_id)
             if parent_run.choice is not None:
@@ -76,27 +75,8 @@ class DecisionCommandService:
             if refinement:
                 request = apply_refinement(request, refinement, [p.id for p in parent_run.places])
             original = parent_run.original_request
-            safety = parent_run.intent
-            intent = DecisionIntent(
-                effective_request=request,
-                excluded_ingredients=safety.excluded_ingredients,
-                allergies=safety.allergies,
-                search_keywords=safety.search_keywords,
-                unhandled_requirements=safety.unhandled_requirements,
-            )
-            if refinement and refinement.action == "differentCuisine":
-                # Search all restaurant categories while ranking against the previous cuisines.
-                intent.search_keywords = list(request.preferences.allowed_foods)[:5]
-        else:
-            assert request is not None
-            try:
-                async with asyncio.timeout(self.timeout_seconds):
-                    intent = await self.llm.parse_intent(request)
-            except TimeoutError:
-                raise AppError("DECISION_TIMEOUT", "本次处理超时，请重试", 504, True) from None
-            request = intent.effective_request
         assert request is not None and original is not None
-        duration = int((time.monotonic() - started) * 1000)
+        require_allowed_food_limit(request.preferences.allowed_foods)
         async with self.repository.transaction(user_id, endpoint + key) as tx:
             existing = await tx.idempotency(endpoint, key)
             if existing:
@@ -123,20 +103,18 @@ class DecisionCommandService:
                     c for p in parent.place_snapshots for c in Place.model_validate(p).cuisine_types
                 ]
             else:
-                session_id = await tx.create_discovery(original)
+                assert prefill is not None
+                session_id = await tx.create_discovery(original, prefill)
             action: str = refinement.action if refinement else ""
             if retry:
                 search_excluded = list(parent.retry_state.get("excluded", []))
                 old_cuisines = list(parent.retry_state.get("old_cuisines", []))
                 action = str(parent.retry_state.get("action", ""))
-            run_id = await tx.create_run(session_id, request, parent_id, excluded, action)
-            await tx.set_intent(run_id, original, intent, duration)
+            run_id = await tx.create_run(session_id, request, parent_id, excluded, action, original)
             state: State = {
                 "schema_version": SCHEMA_VERSION,
                 "decision_run_id": run_id,
                 "request": request.model_dump(mode="json"),
-                "intent": intent.model_dump(mode="json"),
-                "search_keywords": intent.search_keywords,
                 "excluded": search_excluded,
                 "action": action,
                 "places": [],

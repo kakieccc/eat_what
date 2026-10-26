@@ -13,6 +13,7 @@ from app.modules.decision.models import (
     IdempotencyRecord,
     PlaceCandidate,
 )
+from app.modules.preferences.repository import record_meal
 
 
 class ChoiceTransaction:
@@ -68,6 +69,7 @@ class ChoiceTransaction:
         )
         self.session.add(choice)
         await self.session.flush()
+        await record_meal(self.session, self.user_id, choice.id, candidate.id)
         return choice.id
 
     async def record_idempotency(self, key: str, digest: str, result: dict[str, str]) -> None:

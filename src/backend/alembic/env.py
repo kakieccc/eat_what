@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from alembic import context
 from app.core.config import Settings
 from app.infrastructure.database.metadata import metadata
 

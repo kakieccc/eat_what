@@ -19,6 +19,7 @@ import {
 import { Home, Profile } from "./pages/home";
 import { AuthPage } from "./pages/auth";
 import { Button } from "./components/ui/button";
+import { BackgroundActivity } from "./components/background-activity";
 import { AuthProvider, useAuth } from "./lib/auth";
 const Location = lazy(() =>
   import("./pages/location").then((m) => ({ default: m.Location })),
@@ -66,13 +67,14 @@ function App() {
           {configError}
         </aside>
       )}
+      {auth.state === "authenticated" && !configError && <BackgroundActivity />}
       <main>
         {configError ? null : auth.state === "loading" ? (
           <p role="status">正在检查登录状态…</p>
         ) : (
           <Suspense fallback={<p role="status">正在打开页面…</p>}>
             {auth.state === "error" && <div role="alert" className="error">
-              <p>无法检查登录状态，请确认网络和后端服务。</p>
+              <p>500 Error：无法检查登录状态，请确认网络和后端服务。</p>
               <Button variant="outline" onClick={() => void auth.retrySession()}>重试</Button>
             </div>}
             <Routes>

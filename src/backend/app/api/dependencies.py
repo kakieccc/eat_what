@@ -24,7 +24,6 @@ def idempotency_key(
 def get_settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
 
-
 def get_sessions(services: ContainerDependency) -> async_sessionmaker[AsyncSession]:
     return services.sessions
 

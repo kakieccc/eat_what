@@ -5,15 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response
 from starlette.responses import StreamingResponse
 
-from app.api.dependencies import IdempotencyDependency
+from app.api.dependencies import ContainerDependency, IdempotencyDependency
 from app.api.errors import error_responses
 from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
-from app.modules.decision.dependencies import (
-    DecisionCommandsDependency,
-    DecisionQueriesDependency,
-    DecisionStreamsDependency,
-)
 from app.modules.decision.schemas import (
     DecisionCreateRequest,
     DecisionRunResponse,
@@ -29,23 +24,24 @@ async def create_decision_run(
     body: DecisionCreateRequest,
     request: Request,
     response: Response,
-    commands: DecisionCommandsDependency,
-    queries: DecisionQueriesDependency,
+    services: ContainerDependency,
     user: MutationUserDependency,
     idempotency_key: IdempotencyDependency,
 ) -> Envelope[DecisionRunResponse]:
-    run_id = await commands.create(user.user.id, body, idempotency_key, request.state.request_id)
+    run_id = await services.decision_commands.create(
+        user.user.id, body, idempotency_key, request.state.request_id
+    )
     response.headers["Location"] = f"/decision-runs/{run_id}"
-    return Envelope(data=await queries.get_for_user(user.user.id, run_id))
+    return Envelope(data=await services.decision_queries.get_for_user(user.user.id, run_id))
 
 
 @router.get("/{run_id}", responses=error_responses(401, 404, 409, 422, 503))
 async def get_decision_run(
     run_id: UUID,
-    queries: DecisionQueriesDependency,
+    services: ContainerDependency,
     user: CurrentUserDependency,
 ) -> Envelope[DecisionRunResponse]:
-    return Envelope(data=await queries.get_for_user(user.user.id, str(run_id)))
+    return Envelope(data=await services.decision_queries.get_for_user(user.user.id, str(run_id)))
 
 
 @router.get(
@@ -56,17 +52,15 @@ async def get_decision_run(
 async def stream_decision_run_events(
     run_id: UUID,
     request: Request,
-    queries: DecisionQueriesDependency,
-    streams: DecisionStreamsDependency,
+    services: ContainerDependency,
     user: CurrentUserDependency,
 ) -> StreamingResponse:
-    await queries.get_for_user(user.user.id, str(run_id))
+    await services.decision_queries.stream_status(user.user.id, str(run_id))
     return StreamingResponse(
         encode(
-            streams.stream(
+            services.decision_streams.stream(
                 user.user.id,
                 str(run_id),
-                request.state.request_id,
                 request.cookies.get("food_session"),
             )
         ),
@@ -85,16 +79,15 @@ async def create_decision_refinement(
     body: RefinementRequest,
     request: Request,
     response: Response,
-    commands: DecisionCommandsDependency,
-    queries: DecisionQueriesDependency,
+    services: ContainerDependency,
     user: MutationUserDependency,
     idempotency_key: IdempotencyDependency,
 ) -> Envelope[DecisionRunResponse]:
-    child_id = await commands.refine(
+    child_id = await services.decision_commands.refine(
         user.user.id, str(run_id), body, idempotency_key, request.state.request_id
     )
     response.headers["Location"] = f"/decision-runs/{child_id}"
-    return Envelope(data=await queries.get_for_user(user.user.id, child_id))
+    return Envelope(data=await services.decision_queries.get_for_user(user.user.id, child_id))
 
 
 @router.post("/{run_id}/retry", status_code=201, responses=error_responses(401, 403, 404, 409, 422, 503))
@@ -102,13 +95,12 @@ async def retry_decision_run(
     run_id: UUID,
     request: Request,
     response: Response,
-    commands: DecisionCommandsDependency,
-    queries: DecisionQueriesDependency,
+    services: ContainerDependency,
     user: MutationUserDependency,
     idempotency_key: IdempotencyDependency,
 ) -> Envelope[DecisionRunResponse]:
-    child_id = await commands.retry(
+    child_id = await services.decision_commands.retry(
         user.user.id, str(run_id), idempotency_key, request.state.request_id
     )
     response.headers["Location"] = f"/decision-runs/{child_id}"
-    return Envelope(data=await queries.get_for_user(user.user.id, child_id))
+    return Envelope(data=await services.decision_queries.get_for_user(user.user.id, child_id))

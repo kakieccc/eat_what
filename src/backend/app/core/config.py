@@ -20,12 +20,13 @@ class Settings(BaseSettings):
     amap_request_interval_seconds: float = Field(default=0.5, ge=0)
     amap_cache_ttl_seconds: int = Field(default=600, ge=1)
     amap_empty_cache_ttl_seconds: int = Field(default=30, ge=1)
-    llm_timeout_seconds: float = 10
+    llm_timeout_seconds: float = Field(default=10, gt=0, le=300, allow_inf_nan=False)
     llm_max_retries: int = Field(default=1, ge=0)
     llm_temperature: float = Field(default=0, ge=0, le=2)
-    decision_timeout_seconds: float = 20
-    task_lease_seconds: int = 60
-    task_poll_seconds: float = 1
+    decision_timeout_seconds: float = Field(default=20, gt=0, le=600, allow_inf_nan=False)
+    task_lease_seconds: int = Field(default=60, ge=3, le=3600)
+    task_poll_seconds: float = Field(default=1, ge=0.1, le=60, allow_inf_nan=False)
+    task_queue_timeout_seconds: float = Field(default=60, ge=1, le=3600, allow_inf_nan=False)
     auth_session_days: int = Field(default=30, ge=1)
 
     @field_validator(

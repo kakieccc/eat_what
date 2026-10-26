@@ -7,6 +7,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConst
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.clock import now
 from app.infrastructure.database.base import Base, IdentityMixin
 
 
@@ -51,6 +52,9 @@ class Task(IdentityMixin, Base):
         Index("task_claim_status_lease", "status", "lease_until"),
         Index("task_run_created", "decision_run_id", "created_at"),
     )
+
+    def elapsed_ms(self) -> int:
+        return max(0, int((now() - self.started_at).total_seconds() * 1000)) if self.started_at else 0
 
 
 class TaskStep(IdentityMixin, Base):

@@ -31,11 +31,16 @@ class HistoryRepository:
                     DecisionRun.id == DiscoverySession.current_run_id,
                 )
             )
-            if cursor:
+            if cursor is not None:
                 try:
-                    date_text, row_id = json.loads(base64.urlsafe_b64decode(cursor))
+                    if len(cursor) > 1024:
+                        raise ValueError
+                    values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                    if not isinstance(values, list) or len(values) != 2 or not all(isinstance(v, str) for v in values):
+                        raise ValueError
+                    date_text, row_id = values
                     timestamp = datetime.fromisoformat(date_text)
-                    UUID(row_id)
+                    row_id = str(UUID(row_id))
                     if timestamp.tzinfo is None:
                         raise ValueError
                 except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
@@ -87,7 +92,3 @@ class HistoryRepository:
             if discovery is None or discovery.user_id != user_id:
                 raise AppError("NOT_FOUND", "记录不存在", 404)
             return [discovery.current_run_id] if discovery.current_run_id else []
-
-    async def ready(self) -> None:
-        async with self.sessions() as session:
-            await session.execute(select(1))

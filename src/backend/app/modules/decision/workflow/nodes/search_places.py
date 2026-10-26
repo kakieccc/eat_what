@@ -10,6 +10,7 @@ from app.modules.decision.workflow.nodes.common import serialized
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
+from app.modules.preferences.rules import require_allowed_food_limit
 
 CANDIDATE_LIMIT = 10
 SEARCH_LIMIT = 8
@@ -18,7 +19,8 @@ SEARCH_LIMIT = 8
 def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
     async def search(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
-        keywords = list(dict.fromkeys(state.get("search_keywords", [])))[:5] or [""]
+        require_allowed_food_limit(request.preferences.allowed_foods)
+        keywords = list(dict.fromkeys(request.preferences.allowed_foods)) or [""]
         if "search_queue" in state:
             queue = list(state["search_queue"])
             fallback_used = state["search_fallback_used"]

@@ -4,13 +4,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, Response
 
-from app.api.dependencies import SettingsDependency
+from app.api.dependencies import ContainerDependency, SettingsDependency
 from app.api.errors import error_responses
 from app.api.schemas import Envelope
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.dependencies import (
-    AuthServiceDependency,
     CurrentUserDependency,
     MutationUserDependency,
 )
@@ -47,12 +46,12 @@ async def register(
     body: RegisterRequest,
     request: Request,
     response: Response,
-    auth: AuthServiceDependency,
+    services: ContainerDependency,
     settings: SettingsDependency,
     intent: Annotated[str | None, Header(alias="X-Auth-Intent")] = None,
 ) -> Envelope[AuthPayload]:
     check_intent(intent)
-    signed = await auth.register(
+    signed = await services.auth.register(
         body.username, body.password, body.display_name,
         request.client.host if request.client else "unknown",
     )
@@ -65,12 +64,12 @@ async def login(
     body: LoginRequest,
     request: Request,
     response: Response,
-    auth: AuthServiceDependency,
+    services: ContainerDependency,
     settings: SettingsDependency,
     intent: Annotated[str | None, Header(alias="X-Auth-Intent")] = None,
 ) -> Envelope[AuthPayload]:
     check_intent(intent)
-    signed = await auth.login(
+    signed = await services.auth.login(
         body.username, body.password, request.client.host if request.client else "unknown"
     )
     cookie(response, signed, settings)
@@ -84,17 +83,17 @@ async def me(user: CurrentUserDependency) -> Envelope[AuthPayload]:
 
 @router.patch("/me", responses=error_responses(401, 403, 422, 503))
 async def update_me(
-    body: ProfileUpdateRequest, user: MutationUserDependency, auth: AuthServiceDependency
+    body: ProfileUpdateRequest, user: MutationUserDependency, services: ContainerDependency
 ) -> Envelope[UserProfile]:
-    return Envelope(data=await auth.update_display_name(user, body.display_name))
+    return Envelope(data=await services.auth.update_display_name(user, body.display_name))
 
 
 @router.post("/change-password", responses=error_responses(401, 403, 422, 429, 503))
 async def change_password(
     body: ChangePasswordRequest, response: Response,
-    user: MutationUserDependency, auth: AuthServiceDependency,
+    user: MutationUserDependency, services: ContainerDependency,
 ) -> Envelope[dict[str, bool]]:
-    await auth.change_password(
+    await services.auth.change_password(
         user, body.current_password, body.new_password
     )
     response.delete_cookie("food_session", path="/")
@@ -104,9 +103,9 @@ async def change_password(
 
 @router.post("/logout", responses=error_responses(401, 403, 422, 503))
 async def logout(
-    response: Response, user: MutationUserDependency, auth: AuthServiceDependency
+    response: Response, user: MutationUserDependency, services: ContainerDependency
 ) -> Envelope[dict[str, bool]]:
-    await auth.logout(user)
+    await services.auth.logout(user)
     response.delete_cookie("food_session", path="/")
     response.headers["Cache-Control"] = "no-store"
     return Envelope(data={"loggedOut": True})

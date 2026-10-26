@@ -1,26 +1,26 @@
 from fastapi import APIRouter
 
+from app.api.dependencies import ContainerDependency
 from app.api.errors import error_responses
 from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
-from app.modules.preferences.dependencies import PreferencesServiceDependency
-from app.modules.preferences.schemas import Preferences, PreferencesUpdate
+from app.modules.preferences.schemas import PreferencesResponse, PreferencesUpdate
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
 
 @router.get("", responses=error_responses(401, 503))
 async def get_preferences(
-    preferences: PreferencesServiceDependency,
+    services: ContainerDependency,
     user: CurrentUserDependency,
-) -> Envelope[Preferences]:
-    return Envelope(data=await preferences.get(user.user.id))
+) -> Envelope[PreferencesResponse]:
+    return Envelope(data=await services.preferences.get(user.user.id))
 
 
-@router.put("", responses=error_responses(401, 403, 422, 503))
+@router.put("", responses=error_responses(401, 403, 409, 422, 503))
 async def replace_preferences(
     body: PreferencesUpdate,
-    preferences: PreferencesServiceDependency,
+    services: ContainerDependency,
     user: MutationUserDependency,
-) -> Envelope[Preferences]:
-    return Envelope(data=await preferences.save(user.user.id, body))
+) -> Envelope[PreferencesResponse]:
+    return Envelope(data=await services.preferences.save(user.user.id, body))

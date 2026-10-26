@@ -5,9 +5,10 @@ from dataclasses import dataclass, field
 from typing import Protocol, TypeVar, cast
 
 from app.core.models import Model
-from app.modules.decision.schemas import DecisionIntent, DecisionRequest, DecisionRunResponse
+from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
+from app.modules.preferences.schemas import PrefillSnapshot
 from app.modules.task.types import TaskClaim
 
 
@@ -18,12 +19,17 @@ class IdempotencySnapshot:
 
 
 @dataclass(frozen=True)
+class RunStreamStatus:
+    status: str
+    error_code: str | None
+    task_id: str | None
+
+
+@dataclass(frozen=True)
 class ParentSnapshot:
     status: str
     session_id: str
-    request: DecisionRequest
     excluded_place_keys: list[str]
-    previous_place_keys: list[str]
     place_snapshots: list[dict[str, object]]
     retry_state: State = field(default_factory=lambda: cast(State, {}))
 
@@ -34,11 +40,8 @@ class DecisionTransaction(Protocol):
         self, endpoint: str, key: str, digest: str, run_id: str, task_id: str
     ) -> None: ...
     async def parent(self, run_id: str) -> ParentSnapshot: ...
-    async def create_discovery(self, request: DecisionRequest) -> str: ...
+    async def create_discovery(self, request: DecisionRequest, prefill: PrefillSnapshot) -> str: ...
     async def seen_place_keys(self, session_id: str) -> list[str]: ...
-    async def set_intent(
-        self, run_id: str, original: DecisionRequest, intent: DecisionIntent, duration_ms: int
-    ) -> None: ...
     async def create_run(
         self,
         session_id: str,
@@ -46,6 +49,7 @@ class DecisionTransaction(Protocol):
         parent_id: str | None,
         excluded: list[str],
         action: str,
+        original: DecisionRequest,
     ) -> str: ...
     async def recent_place_keys(self) -> list[str]: ...
     async def enqueue(
@@ -62,8 +66,8 @@ class DecisionRepository(Protocol):
     def transaction(
         self, user_id: str, lock_key: str
     ) -> AbstractAsyncContextManager[DecisionTransaction]: ...
-    async def read(self, run_id: str) -> DecisionRunResponse: ...
     async def read_for_user(self, user_id: str, run_id: str) -> DecisionRunResponse: ...
+    async def stream_status(self, user_id: str, run_id: str) -> RunStreamStatus: ...
     async def prepare(self, claim: TaskClaim) -> tuple[str, str, str, State, int]: ...
     async def complete(
         self, claim: TaskClaim, state: State, run_id: str, duration_ms: int
@@ -79,13 +83,11 @@ class StructuredLlm(Protocol):
 
 
 class FoodDecisionLlm(Protocol):
-    async def parse_intent(self, request: DecisionRequest) -> DecisionIntent: ...
+    async def filter_foods(self, places: list[Place], request: DecisionRequest) -> list[Place]: ...
     async def rerank(
         self,
         places: list[Place],
-        preferences: DecisionRequest,
-        intent: DecisionIntent,
+        request: DecisionRequest,
         action: str = "",
         old_cuisines: list[str] | None = None,
     ) -> list[Place]: ...
-    async def explain(self, places: list[Place]) -> list[Place]: ...

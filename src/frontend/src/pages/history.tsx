@@ -97,10 +97,10 @@ export function History() {
               <button
                 className="text-button"
                 onClick={() => {
-                  draft.setPreferences({
+                  draft.initialize({
                     ...fromDecisionRequest(item.request),
                     requestText: "",
-                  });
+                  }, "history", null);
                   draft.setRunId(null);
                   draft.setOrigin(null);
                   navigate("/map");
@@ -208,7 +208,7 @@ export function Detail() {
             </a>
           )}
           <Button variant="outline" asChild>
-            <Link to="/" onClick={() => draft.setRunId(null)}>开始新的选餐</Link>
+            <Link to="/" onClick={() => draft.startNewMeal()}>开始新的选餐</Link>
           </Button>
           <p className="data-source">
             来源：高德地图 ·{" "}

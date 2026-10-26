@@ -1,4 +1,4 @@
-"""Initial schema.
+"""Initial release schema.
 
 Revision ID: 0001
 Revises: None
@@ -9,8 +9,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -74,7 +75,10 @@ def upgrade() -> None:
     op.create_table(
         "discovery_sessions",
         sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
+        sa.Column("current_run_id", sa.Uuid(as_uuid=False), nullable=True),
+        sa.Column("seen_place_keys", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("request_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("prefill_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -112,18 +116,17 @@ def upgrade() -> None:
     op.create_table(
         "preferences",
         sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
-        sa.Column("preferred_foods", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("excluded_foods", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("allowed_foods", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("disliked_places", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column(
-            "typical_budget_per_person_min", sa.Numeric(precision=10, scale=2), nullable=True
-        ),
-        sa.Column(
-            "typical_budget_per_person_max", sa.Numeric(precision=10, scale=2), nullable=True
-        ),
-        sa.Column("typical_radius_meters", sa.Integer(), nullable=False),
-        sa.Column("preferred_tags", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("learned", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("overrides", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("revision", sa.Integer(), nullable=False),
+        sa.Column("meal_count", sa.Integer(), nullable=False),
+        sa.Column("requested_count", sa.Integer(), nullable=False),
+        sa.Column("attempted_count", sa.Integer(), nullable=False),
+        sa.Column("claimed_count", sa.Integer(), nullable=False),
+        sa.Column("learning_status", sa.String(length=16), nullable=False),
+        sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("lease_token", sa.String(length=36), nullable=True),
+        sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
         sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -134,6 +137,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("user_id"),
     )
+    op.create_index(
+        "preference_learning_queue", "preferences", ["learning_status", "lease_until"], unique=False
+    )
     op.create_table(
         "decision_runs",
         sa.Column("discovery_session_id", sa.Uuid(as_uuid=False), nullable=False),
@@ -143,7 +149,6 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("refinement_action", sa.String(length=64), nullable=False),
         sa.Column("original_request", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("intent", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("effective_preferences", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("filter_summary", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("excluded_place_keys", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
@@ -178,27 +183,7 @@ def upgrade() -> None:
         "place_candidates",
         sa.Column("decision_run_id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("place_key", sa.String(length=128), nullable=False),
-        sa.Column("external_place_id", sa.String(length=128), nullable=False),
-        sa.Column("name", sa.String(length=150), nullable=False),
-        sa.Column("category_code", sa.String(length=64), nullable=False),
-        sa.Column("category_name", sa.String(length=200), nullable=False),
-        sa.Column("cuisine_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("tags", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("address", sa.String(length=250), nullable=False),
-        sa.Column("latitude", sa.Float(), nullable=False),
-        sa.Column("longitude", sa.Float(), nullable=False),
-        sa.Column("straight_line_distance_meters", sa.Integer(), nullable=False),
-        sa.Column("rating", sa.Float(), nullable=True),
-        sa.Column("average_cost", sa.Numeric(precision=10, scale=2), nullable=True),
-        sa.Column("opening_hours_text", sa.String(length=200), nullable=True),
-        sa.Column("phone", sa.String(length=80), nullable=True),
-        sa.Column("photos", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("score", sa.Float(), nullable=False),
-        sa.Column("score_breakdown", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("rank", sa.Integer(), nullable=False),
-        sa.Column("reason", sa.String(length=600), nullable=False),
-        sa.Column("warnings", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("navigation_url", sa.String(length=1000), nullable=True),
         sa.Column("place_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -210,9 +195,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("decision_run_id", "place_key"),
         sa.UniqueConstraint("decision_run_id", "rank"),
-    )
-    op.create_index(
-        "candidate_run_score", "place_candidates", ["decision_run_id", "score"], unique=False
     )
     op.create_index(
         op.f("ix_place_candidates_decision_run_id"),
@@ -259,7 +241,6 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("discovery_session_id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("place_candidate_id", sa.Uuid(as_uuid=False), nullable=False),
-        sa.Column("feedback", sa.String(length=300), nullable=False),
         sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -313,9 +294,50 @@ def upgrade() -> None:
         sa.UniqueConstraint("task_id", "ordinal"),
     )
     op.create_index("task_step_status", "task_steps", ["task_id", "status"], unique=False)
+    op.create_table(
+        "preference_samples",
+        sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
+        sa.Column("discovery_session_id", sa.Uuid(as_uuid=False), nullable=False),
+        sa.Column("choice_id", sa.Uuid(as_uuid=False), nullable=False),
+        sa.Column("meal_number", sa.Integer(), nullable=False),
+        sa.Column("prefill_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("active_changes", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("final_conditions", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("request_text", sa.Text(), nullable=False),
+        sa.Column("restaurant_facts", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
+        sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["choice_id"],
+            ["place_choices.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["discovery_session_id"],
+            ["discovery_sessions.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("choice_id"),
+        sa.UniqueConstraint("discovery_session_id"),
+        sa.UniqueConstraint("user_id", "meal_number"),
+    )
+    op.create_foreign_key(
+        "fk_discovery_current_run",
+        "discovery_sessions",
+        "decision_runs",
+        ["current_run_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
 
 
 def downgrade() -> None:
+    op.drop_constraint("fk_discovery_current_run", "discovery_sessions", type_="foreignkey")
+    op.drop_table("preference_samples")
     op.drop_index("task_step_status", table_name="task_steps")
     op.drop_table("task_steps")
     op.drop_index("task_event_order", table_name="task_events")
@@ -328,11 +350,11 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_tasks_decision_run_id"), table_name="tasks")
     op.drop_table("tasks")
     op.drop_index(op.f("ix_place_candidates_decision_run_id"), table_name="place_candidates")
-    op.drop_index("candidate_run_score", table_name="place_candidates")
     op.drop_table("place_candidates")
     op.drop_index(op.f("ix_decision_runs_status"), table_name="decision_runs")
     op.drop_index(op.f("ix_decision_runs_discovery_session_id"), table_name="decision_runs")
     op.drop_table("decision_runs")
+    op.drop_index("preference_learning_queue", table_name="preferences")
     op.drop_table("preferences")
     op.drop_index(op.f("ix_idempotency_records_user_id"), table_name="idempotency_records")
     op.drop_table("idempotency_records")

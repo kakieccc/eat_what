@@ -42,8 +42,7 @@ export function FoodMap({
         setReady(true);
       })
       .catch(
-        (e) =>
-          active && setError(e instanceof Error ? e.message : "地图加载失败"),
+        () => active && setError("500 Error：地图加载失败"),
       );
     return () => {
       active = false;
@@ -83,7 +82,9 @@ export function FoodMap({
         if (chosen)
           map.setCenter([chosen.location.longitude, chosen.location.latitude]);
       })
-      .catch(() => setError("地图加载失败"));
+      .catch(() => {
+        if (active) setError("500 Error：地图加载失败");
+      });
     return () => {
       active = false;
       if (objects.length) map.remove(objects);
@@ -93,8 +94,8 @@ export function FoodMap({
   return (
     <div className="map-wrap">
       <div ref={element} className="map-canvas" aria-label="高德地图" />
-      {!ready && (
-        <div className="map-message">
+      {(!ready || error) && (
+        <div className="map-message" role={error ? "alert" : "status"}>
           <MapPin size={36} />
           <p>{error || "正在加载高德地图"}</p>
           {error && (
