@@ -48,7 +48,12 @@ class Heartbeat(Model):
     timestamp: datetime
 
 
+ProgressEvent = Annotated[
+    RunStarted | NodeStarted | NodeCompleted | RunFailed,
+    Field(discriminator="type"),
+]
+
 DecisionEvent = Annotated[
-    RunStarted | NodeStarted | NodeCompleted | ResultEvent | RunFailed | Heartbeat,
+    ProgressEvent | ResultEvent | Heartbeat,
     Field(discriminator="type"),
 ]

@@ -1,4 +1,4 @@
-import { ApiError, fetchResponse, handleUnauthorized, errorMessage, getSessionVersion, requireCurrentSession } from "./api";
+import { fetchResponse, handleUnauthorized, responseData, getSessionVersion, requireCurrentSession } from "./api";
 import { eventSchema, type DecisionEvent } from "./schemas";
 export class SseParser {
   private pending = "";
@@ -17,7 +17,7 @@ export class SseParser {
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice(5).replace(/^ /, ""))
         .join("\n");
-      if (data && this.onEvent(eventSchema.parse(JSON.parse(data)) as DecisionEvent) === false) {
+      if (data && this.onEvent(eventSchema.parse(JSON.parse(data))) === false) {
         this.pending = "";
         return;
       }
@@ -43,18 +43,17 @@ export async function subscribe(
     },
   });
   if (!response.ok) {
-    const error = await response.json();
-    requireCurrentSession(version, signal);
-    if (response.status === 401 && error.error?.code === "AUTH_REQUIRED")
-      handleUnauthorized();
-    throw new ApiError(errorMessage(error.error?.code, error.error?.message), response.status, error.error?.code);
+    await responseData(response, signal);
   }
   if (!response.body) throw new Error("浏览器不支持流式响应");
   const reader = response.body.getReader(),
     decoder = new TextDecoder();
   let terminal = false;
-  const cancel = () => { void reader.cancel().catch(() => undefined); };
-  signal.addEventListener("abort", cancel, { once: true });
+  const cancel = () => reader.cancel().catch((error: unknown) => {
+    console.error("Unable to close the recommendation stream", error);
+  });
+  const abort = () => { void cancel(); };
+  signal.addEventListener("abort", abort, { once: true });
   const parser = new SseParser((e) => {
     requireCurrentSession(version, signal);
     if (terminal) return false;
@@ -79,8 +78,8 @@ export async function subscribe(
     parser.finish();
     if (!terminal) throw new Error("连接已断开，可以恢复查询结果");
   } finally {
-    signal.removeEventListener("abort", cancel);
-    await reader.cancel().catch(() => undefined);
+    signal.removeEventListener("abort", abort);
+    await cancel();
     reader.releaseLock();
   }
 }

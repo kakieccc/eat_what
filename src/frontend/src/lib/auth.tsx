@@ -1,9 +1,8 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { advanceSession, getSessionVersion, configError, endpoint, request, setCsrfToken, setUnauthorizedHandler } from "./api";
-import { safeSessionStorage } from "./storage";
 import { useDraft } from "./store";
-import { notifyAuthChanged, watchAuthChanges } from "./auth-sync";
+import { notifyAuthChanged, watchAuthChanges, withAuthLock } from "./auth-sync";
 
 export type User = {
   id: string;
@@ -26,16 +25,29 @@ type AuthContextValue = {
 
 const Context = createContext<AuthContextValue | null>(null);
 
+async function readSession(signal?: AbortSignal): Promise<AuthPayload | null> {
+  const response = await fetch(endpoint("/auth/me"), {
+    credentials: "include", cache: "no-store", signal,
+  });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("无法检查登录状态");
+  const payload = await response.json();
+  const data = payload.data as AuthPayload | undefined;
+  if (!payload.success || !data?.user || !data.csrfToken)
+    throw new Error("登录状态响应无效");
+  return data;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const [state, setState] = useState<AuthState>("loading");
   const [user, setUser] = useState<User | null>(null);
+  const pendingChanges = useRef(0);
 
   const clearLocal = useCallback(() => {
     void client.cancelQueries();
     client.clear();
     useDraft.getState().reset();
-    safeSessionStorage.removeItem("food-start");
     setCsrfToken(null);
     setUser(null);
   }, [client]);
@@ -48,7 +60,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(becomeAnonymous);
     return () => setUnauthorizedHandler(null);
   }, [becomeAnonymous]);
+  const establish = useCallback((data: AuthPayload | null) => {
+    if (!data) {
+      becomeAnonymous();
+      return;
+    }
+    if (useDraft.getState().ownerId !== data.user.id) {
+      clearLocal();
+      useDraft.getState().setOwnerId(data.user.id);
+    }
+    setCsrfToken(data.csrfToken);
+    setUser(data.user);
+    setState("authenticated");
+  }, [becomeAnonymous, clearLocal]);
   const loadSession = useCallback(async (signal?: AbortSignal, reset = false) => {
+    // A queued account change will reconcile the session before releasing its lock.
+    if (pendingChanges.current) return;
     const version = advanceSession();
     const stale = () => signal?.aborted || version !== getSessionVersion();
     if (reset) clearLocal();
@@ -58,32 +85,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setState("loading");
     try {
-      const response = await fetch(endpoint("/auth/me"), {
-        credentials: "include",
-        signal,
+      await withAuthLock(async () => {
+        if (stale()) return;
+        const data = await readSession(signal);
+        if (!stale()) establish(data);
       });
-      if (stale()) return;
-      if (response.status === 401) {
-        becomeAnonymous();
-        return;
-      }
-      if (!response.ok) throw new Error("无法检查登录状态");
-      const payload = await response.json();
-      if (stale()) return;
-      const data = payload.data as AuthPayload | undefined;
-      if (!payload.success || !data?.user || !data.csrfToken)
-        throw new Error("登录状态响应无效");
-      if (useDraft.getState().ownerId !== data.user.id) {
-        clearLocal();
-        useDraft.getState().setOwnerId(data.user.id);
-      }
-      setCsrfToken(data.csrfToken);
-      setUser(data.user);
-      setState("authenticated");
     } catch {
       if (!stale()) setState("error");
     }
-  }, [becomeAnonymous, clearLocal]);
+  }, [clearLocal, establish]);
   useEffect(() => {
     const controller = new AbortController();
     void loadSession(controller.signal);
@@ -91,30 +101,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadSession]);
   useEffect(() => watchAuthChanges(() => { void loadSession(undefined, true); }), [loadSession]);
 
-  const establish = (data: AuthPayload) => {
-    clearLocal();
-    useDraft.getState().setOwnerId(data.user.id);
-    setCsrfToken(data.csrfToken);
-    setUser(data.user);
-    setState("authenticated");
+  const changeSession = async (path: string, body: unknown, forCurrentUser = false) => {
+    const expectedUserId = user?.id;
+    pendingChanges.current++;
+    try {
+      await withAuthLock(async () => {
+        advanceSession();
+        let changed = false;
+        let failure: unknown;
+        try {
+          if (forCurrentUser) {
+            const current = await readSession();
+            if (!current || current.user.id !== expectedUserId)
+              throw new Error("账号已在其他标签页变更，请确认当前账号后重试");
+            setCsrfToken(current.csrfToken);
+          }
+          await request(path, body);
+          changed = true;
+        } catch (error) {
+          failure = error;
+        }
+        // Set-Cookie may already have been applied even when reading the response failed.
+        advanceSession();
+        try {
+          const current = await readSession();
+          if (changed) clearLocal();
+          establish(current);
+        } catch (error) {
+          clearLocal();
+          setState("error");
+          throw error;
+        } finally {
+          notifyAuthChanged();
+        }
+        if (!changed) throw failure;
+      });
+    } finally {
+      pendingChanges.current--;
+    }
   };
   const login = async (username: string, password: string) => {
-    const version = advanceSession();
-    const data = await request<AuthPayload>("/auth/login", { username, password });
-    if (version === getSessionVersion()) {
-      establish(data);
-      notifyAuthChanged();
-    }
+    await changeSession("/auth/login", { username, password });
   };
   const register = async (username: string, password: string, displayName: string) => {
-    const version = advanceSession();
-    const data = await request<AuthPayload>("/auth/register", {
+    await changeSession("/auth/register", {
       username, password, displayName: displayName.trim(),
     });
-    if (version === getSessionVersion()) {
-      establish(data);
-      notifyAuthChanged();
-    }
   };
   const updateName = async (displayName: string) => {
     const version = getSessionVersion();
@@ -122,22 +154,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (version === getSessionVersion()) setUser(data);
   };
   const changePassword = async (currentPassword: string, newPassword: string) => {
-    const version = advanceSession();
-    await request<{ loggedOut: boolean }>("/auth/change-password", {
+    await changeSession("/auth/change-password", {
       currentPassword, newPassword,
-    });
-    if (version === getSessionVersion()) {
-      becomeAnonymous();
-      notifyAuthChanged();
-    }
+    }, true);
   };
   const logout = async () => {
-    const version = advanceSession();
-    await request<{ loggedOut: boolean }>("/auth/logout", {});
-    if (version === getSessionVersion()) {
-      becomeAnonymous();
-      notifyAuthChanged();
-    }
+    await changeSession("/auth/logout", {}, true);
   };
   return <Context.Provider value={{
     state, user, retrySession: () => loadSession(),

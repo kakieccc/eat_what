@@ -27,7 +27,15 @@ class Settings(BaseSettings):
     task_lease_seconds: int = Field(default=60, ge=3, le=3600)
     task_poll_seconds: float = Field(default=1, ge=0.1, le=60, allow_inf_nan=False)
     task_queue_timeout_seconds: float = Field(default=60, ge=1, le=3600, allow_inf_nan=False)
+    task_concurrency: int = Field(default=2, ge=1)
+    task_max_active: int = Field(default=4, ge=1)
+    task_user_submissions_per_minute: int = Field(default=3, ge=1)
     auth_session_days: int = Field(default=30, ge=1)
+    auth_password_concurrency: int = Field(default=1, ge=1)
+    auth_password_max_waiters: int = Field(default=2, ge=0)
+    auth_password_wait_seconds: float = Field(default=1, gt=0, allow_inf_nan=False)
+    sse_max_connections_per_user: int = Field(default=2, ge=1)
+    sse_max_connections: int = Field(default=8, ge=1)
 
     @field_validator(
         "database_url",

@@ -1,11 +1,27 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useDraft } from "./store";
-import { request } from "./api";
+import { ApiError, request } from "./api";
 import { runSchema, type Run } from "./schemas";
 
 const discarded = new WeakMap<QueryClient, Set<string>>();
 const channelName = "food-current-recommendation";
 export const isDiscardedRun = (client: QueryClient, id: string) => discarded.get(client)?.has(id) ?? false;
+
+export function useMealBusy() {
+  const client = useQueryClient();
+  const runId = useDraft((state) => state.runId);
+  const job = useDraft((state) => state.job);
+  const query = useQuery({
+    queryKey: ["run", runId],
+    queryFn: ({ signal }) => readRecommendation(client, runId!, signal),
+    enabled: false,
+  });
+  const unavailable = query.error instanceof ApiError &&
+    ["WORKFLOW_UPGRADED", "RUN_SUPERSEDED", "NOT_FOUND"].includes(query.error.code);
+  return (!!job && ["submitting", "failed"].includes(job.status)) ||
+    (!!runId && !unavailable &&
+      (!query.data || ["pending", "running"].includes(query.data.status)));
+}
 
 function discard(client: QueryClient, id: string) {
   const ids = discarded.get(client) ?? new Set<string>();
@@ -25,11 +41,9 @@ export function acceptRecommendation(client: QueryClient, run: Run, previousId?:
   if (previousId && previousId !== run.decisionRunId) discard(client, previousId);
   client.setQueryData(["run", run.decisionRunId], run);
   client.removeQueries({ queryKey: ["history"] });
-  if (typeof BroadcastChannel !== "undefined") {
-    const channel = new BroadcastChannel(channelName);
-    channel.postMessage({ previousId, runId: run.decisionRunId });
-    channel.close();
-  }
+  const channel = new BroadcastChannel(channelName);
+  channel.postMessage({ previousId, runId: run.decisionRunId });
+  channel.close();
 }
 
 export async function readRecommendation(client: QueryClient, runId: string, signal?: AbortSignal): Promise<Run> {
@@ -50,11 +64,9 @@ export async function refreshCurrentRecommendation(client: QueryClient, sessionI
 }
 
 export async function completeSelection(client: QueryClient, runId: string) {
-  if (typeof BroadcastChannel !== "undefined") {
-    const channel = new BroadcastChannel(channelName);
-    channel.postMessage({ type: "selectionCompleted", runId });
-    channel.close();
-  }
+  const channel = new BroadcastChannel(channelName);
+  channel.postMessage({ type: "selectionCompleted", runId });
+  channel.close();
   await Promise.all([
     client.invalidateQueries({ queryKey: ["run", runId] }),
     client.invalidateQueries({ queryKey: ["history"] }),
@@ -62,7 +74,6 @@ export async function completeSelection(client: QueryClient, runId: string) {
 }
 
 export function watchRecommendations(client: QueryClient) {
-  if (typeof BroadcastChannel === "undefined") return () => {};
   const channel = new BroadcastChannel(channelName);
   channel.onmessage = (event: MessageEvent<unknown>) => {
     const data = event.data;

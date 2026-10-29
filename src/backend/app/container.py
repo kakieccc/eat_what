@@ -19,7 +19,6 @@ class Container:
     auth: AuthService
     sessions: async_sessionmaker[AsyncSession]
     worker: TaskWorker
-    preference_worker: TaskWorker
     decision_commands: DecisionCommandService
     decision_queries: DecisionQueryService
     decision_streams: DecisionStreamService

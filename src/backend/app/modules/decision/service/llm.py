@@ -62,8 +62,8 @@ class DecisionLlmService:
         self,
         places: list[Place],
         request: DecisionRequest,
-        action: str = "",
-        old_cuisines: list[str] | None = None,
+        action: str,
+        old_cuisines: list[str],
     ) -> list[Place]:
         if not places:
             return places
@@ -77,7 +77,7 @@ class DecisionLlmService:
                 "additionalGoal": "优先不同于之前菜系的餐厅"
                 if action == "differentCuisine"
                 else "",
-                "previousCuisines": old_cuisines or [],
+                "previousCuisines": old_cuisines,
                 "places": facts(places),
             },
         )

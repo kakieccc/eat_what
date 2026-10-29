@@ -69,25 +69,29 @@ class AmapCache:
         ttl = self.empty_ttl_seconds if empty else self.ttl_seconds
         payload = entry.model_dump(mode="json")
         expires_at = entry.fetched_at + timedelta(seconds=ttl)
+        cache_key = self.key(operation, params)
         async with self.sessions.begin() as session:
-            inserted = await session.scalar(
-                insert(PlaceCache)
-                .values(
-                    cache_key=self.key(operation, params), payload=payload, expires_at=expires_at
+            while True:
+                inserted = await session.scalar(
+                    insert(PlaceCache)
+                    .values(cache_key=cache_key, payload=payload, expires_at=expires_at)
+                    .on_conflict_do_nothing(index_elements=["cache_key"])
+                    .returning(PlaceCache.id)
                 )
-                .on_conflict_do_nothing(index_elements=["cache_key"])
-                .returning(PlaceCache.id)
-            )
-            if inserted is not None:
-                return
-            cached = (await session.scalars(
-                select(PlaceCache)
-                .where(PlaceCache.cache_key == self.key(operation, params))
-                .with_for_update()
-            )).one()
+                if inserted is not None:
+                    return
+                cached = await session.scalar(
+                    select(PlaceCache).where(PlaceCache.cache_key == cache_key).with_for_update()
+                )
+                if cached is not None:
+                    break
+                # Cleanup may delete the conflicting row before the locking read.
             try:
                 previous = FetchedResponse.model_validate(cached.payload)
             except ValidationError:
+                log.warning(json.dumps({
+                    "event": "amapCacheInvalid", "operation": operation, "error": "invalid_envelope",
+                }))
                 previous = None
             if previous is not None and previous.fetched_at > entry.fetched_at:
                 return

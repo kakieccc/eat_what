@@ -21,10 +21,12 @@ from app.modules.decision.ports import RunStreamStatus
 from app.modules.decision.repository.mappers import place_from_candidate, request_for_run
 from app.modules.decision.repository.transaction import DecisionTransaction
 from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse
+from app.modules.decision.workflow.events import RunFailed, WorkflowError
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.schemas import Place
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.models import Task, TaskStatus, TaskStep
+from app.modules.task.repository import record_event
 from app.modules.task.types import TaskClaim
 
 
@@ -48,22 +50,19 @@ class DecisionRepository:
         latest_task = select(Task.id).where(Task.decision_run_id == DecisionRun.id).order_by(
             Task.created_at.desc(), Task.id.desc(),
         ).limit(1).correlate(DecisionRun).scalar_subquery()
-        selected = select(PlaceChoice.id).where(
-            PlaceChoice.discovery_session_id == DiscoverySession.id,
-        ).correlate(DiscoverySession).exists()
         async with self.sessions() as session:
             row = (await session.execute(select(
                 DecisionRun.status, DecisionRun.error_code, DiscoverySession.current_run_id,
-                latest_task, DecisionRun.workflow_version, selected,
+                latest_task, DecisionRun.workflow_version,
             ).join(DiscoverySession, DecisionRun.discovery_session_id == DiscoverySession.id).where(
                 DecisionRun.id == run_id, DiscoverySession.user_id == user_id,
             ))).one_or_none()
         if row is None:
             raise AppError("NOT_FOUND", "记录不存在", 404)
-        status, error_code, current_run, task_id, version, has_choice = row
+        status, error_code, current_run, task_id, version = row
         if current_run != run_id:
             raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
-        if version != str(SCHEMA_VERSION) and not has_choice:
+        if version != str(SCHEMA_VERSION):
             raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
         return RunStreamStatus(status=status, error_code=error_code, task_id=task_id)
 
@@ -78,6 +77,8 @@ class DecisionRepository:
                 raise AppError("NOT_FOUND", "发现会话不存在", 404)
             if discovery.current_run_id != run_id:
                 raise AppError("RUN_SUPERSEDED", "请求冲突", 409)
+            if run.workflow_version != str(SCHEMA_VERSION):
+                raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
             candidates = list(
                 (
                     await session.scalars(
@@ -91,11 +92,6 @@ class DecisionRepository:
                 select(PlaceChoice).where(
                     PlaceChoice.discovery_session_id == run.discovery_session_id
                 )
-            )
-            if chosen is None and run.workflow_version != str(SCHEMA_VERSION):
-                raise AppError("WORKFLOW_UPGRADED", "选餐流程已更新，请开始新的选餐", 409)
-            selected_candidate = (
-                await session.get(PlaceCandidate, chosen.place_candidate_id) if chosen else None
             )
             warnings = []
             if run.filter_summary.get("searchFailures"):
@@ -116,10 +112,10 @@ class DecisionRepository:
                 choice=ChoiceSnapshot(
                     id=chosen.id,
                     candidate_id=chosen.place_candidate_id,
-                    decision_run_id=selected_candidate.decision_run_id,
+                    decision_run_id=run.id,
                     selected_at=chosen.selected_at,
                 )
-                if chosen and selected_candidate
+                if chosen
                 else None,
                 suggestions=[]
                 if candidates or run.status != "completed"
@@ -133,11 +129,11 @@ class DecisionRepository:
             )
 
     @asynccontextmanager
-    async def transaction(self, user_id: str, lock_key: str) -> AsyncIterator[DecisionTransaction]:
+    async def transaction(self, user_id: str) -> AsyncIterator[DecisionTransaction]:
         async with self.sessions.begin() as session:
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": lock_id(user_id + ":" + lock_key)},
+                {"key": lock_id("decision-tasks:" + user_id)},
             )
             yield DecisionTransaction(session, self.model_name, user_id)
 
@@ -160,7 +156,7 @@ class DecisionRepository:
             run.error_code = None
             run.completed_at = None
             task.phase = task.phase or "running"
-            run.duration_ms = max(run.duration_ms, task.elapsed_ms())
+            run.duration_ms = task.elapsed_ms()
             return task.id, run.id, task.request_id, state, run.duration_ms
 
     async def _current_session(self, session: AsyncSession, claim: TaskClaim) -> DiscoverySession:
@@ -182,6 +178,7 @@ class DecisionRepository:
                 Task.id == claim.task_id,
                 Task.lease_token == claim.lease_token,
                 Task.status == TaskStatus.running.value,
+                Task.lease_until > now(),
             )
             .with_for_update().execution_options(populate_existing=True)
         )
@@ -199,10 +196,9 @@ class DecisionRepository:
             assert discovery is not None
             discovery.seen_place_keys = list(dict.fromkeys([
                 *discovery.seen_place_keys,
-                *(Place.model_validate(raw).id for raw in state.get("places", [])),
+                *(Place.model_validate(raw).id for raw in state["places"]),
             ]))
             self._persist_result(session, run, state)
-            task.state = {key: value for key, value in state.items() if key != "lease_token"}
             task.status = TaskStatus.succeeded.value
             task.phase = "completed"
             task.lease_token = None
@@ -212,18 +208,11 @@ class DecisionRepository:
             run.status = "completed"
             run.completed_at = now()
 
-    async def fail(self, claim: TaskClaim, code: str, message: str) -> bool:
+    async def fail(self, claim: TaskClaim, code: str, message: str, retryable: bool) -> bool:
         async with self.sessions.begin() as session:
             try:
-                await self._current_session(session, claim)
+                task = await self._owned(session, claim)
             except LostTaskLease:
-                return False
-            task = await session.scalar(
-                select(Task)
-                .where(Task.id == claim.task_id, Task.lease_token == claim.lease_token)
-                .with_for_update()
-            )
-            if task is None:
                 return False
             task.status = TaskStatus.failed.value
             task.phase = "failed"
@@ -250,11 +239,14 @@ class DecisionRepository:
                 run.status = "failed"
                 run.error_code = code
                 run.completed_at = now()
+                await record_event(session, task.id, RunFailed(error=WorkflowError(
+                    code=code, message=message, retryable=retryable,
+                )))
                 return True
             return False
 
     def _persist_result(self, session: AsyncSession, run: DecisionRun, state: State) -> None:
-        for rank, raw in enumerate(state.get("places", []), 1):
+        for rank, raw in enumerate(state["places"], 1):
             place = Place.model_validate(raw).model_copy(
                 update={"candidate_id": uid(), "rank": rank}
             )
@@ -268,7 +260,7 @@ class DecisionRepository:
                 )
             )
         run.effective_preferences = state["request"]
-        run.filter_summary = dict(state.get("filter_summary", {}))
+        run.filter_summary = dict(state["filter_summary"])
         run.llm_used = True
         run.status = "completed"
         run.completed_at = now()

@@ -43,7 +43,7 @@ class HistoryRepository:
                     row_id = str(UUID(row_id))
                     if timestamp.tzinfo is None:
                         raise ValueError
-                except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+                except (ValueError, TypeError, UnicodeError):
                     raise AppError("INVALID_CURSOR", "分页参数无效") from None
                 query = query.where(
                     or_(

@@ -32,7 +32,6 @@ from app.modules.history.repository import HistoryRepository
 from app.modules.history.service import HistoryService
 from app.modules.places.repository import PlacesRepository
 from app.modules.places.service import PlaceService
-from app.modules.preferences.learning import PreferenceLearner
 from app.modules.preferences.repository import PreferencesRepository
 from app.modules.task.repository import TaskStore
 from app.modules.task.service import TaskWorker
@@ -57,14 +56,15 @@ def build_container(
     structured_llm = OpenAICompatibleLlm(settings, llm_client)
     llm = DecisionLlmService(structured_llm)
     preferences = PreferencesRepository(sessions)
-    learner = PreferenceLearner(preferences, structured_llm, settings.task_lease_seconds)
-    preference_worker = TaskWorker(
-        preferences, learner.execute_claim, lease_seconds=settings.task_lease_seconds,
-        poll_seconds=settings.task_poll_seconds,
-    )
     repository = DecisionRepository(sessions, settings.llm_model)
     auth = AuthService(
-        SqlAuthRepository(sessions), Argon2PasswordHasher(), settings.auth_session_days
+        SqlAuthRepository(sessions),
+        Argon2PasswordHasher(
+            settings.auth_password_concurrency,
+            settings.auth_password_max_waiters,
+            settings.auth_password_wait_seconds,
+        ),
+        settings.auth_session_days,
     )
     tasks = TaskStore(sessions, settings.task_queue_timeout_seconds)
     queries = DecisionQueryService(repository, places)
@@ -73,24 +73,27 @@ def build_container(
         tasks,
         places,
         llm,
-        settings.task_lease_seconds,
         settings.decision_timeout_seconds,
     )
     worker = TaskWorker(
         tasks,
-        runner.execute_claim,
+        runner,
         lease_seconds=settings.task_lease_seconds,
         poll_seconds=settings.task_poll_seconds,
         maintenance=tasks.expire_queued,
+        concurrency=settings.task_concurrency,
     )
     return Container(
         auth=auth,
         sessions=sessions,
         worker=worker,
-        preference_worker=preference_worker,
-        decision_commands=DecisionCommandService(repository),
+        decision_commands=DecisionCommandService(
+            repository, settings.task_max_active, settings.task_user_submissions_per_minute,
+        ),
         decision_queries=queries,
-        decision_streams=DecisionStreamService(tasks, queries, auth),
+        decision_streams=DecisionStreamService(
+            tasks, queries, auth, settings.sse_max_connections_per_user, settings.sse_max_connections,
+        ),
         location=amap,
         places=places,
         preferences=preferences,
@@ -121,16 +124,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             app.state.container = build_container(settings, sessions, client, llm_client)
             app.state.ready = True
-            workers = [app.state.container.worker, app.state.container.preference_worker]
-            jobs = [asyncio.create_task(worker.run()) for worker in workers]
+            job = asyncio.create_task(app.state.container.worker.run())
             try:
                 yield
             finally:
-                for worker in workers:
-                    await worker.stop()
-                for job in jobs:
-                    job.cancel()
-                await asyncio.gather(*jobs, return_exceptions=True)
+                job.cancel()
+                try:
+                    await job
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    await app.state.container.auth.passwords.aclose()
         finally:
             app.state.ready = False
             await engine_of(sessions).dispose()

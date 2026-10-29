@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import now
@@ -29,6 +29,13 @@ class ChoiceTransaction:
                 IdempotencyRecord.idempotency_key == key,
             )
         )
+        current = now()
+        if row and row.expires_at <= current:
+            await self.session.execute(delete(IdempotencyRecord).where(
+                IdempotencyRecord.id == row.id, IdempotencyRecord.expires_at <= current,
+            ))
+            await self.session.flush()
+            return None
         return IdempotencySnapshot(row.request_hash, dict(row.response_body)) if row else None
 
     async def candidate(self, candidate_id: str) -> CandidateSnapshot:
@@ -46,7 +53,7 @@ class ChoiceTransaction:
             )
             .with_for_update()
         )
-        if discovery is None or discovery.user_id != self.user_id:
+        if discovery is None:
             raise AppError("NOT_FOUND", "候选不存在", 404)
         if discovery.current_run_id != run.id:
             raise AppError("RUN_SUPERSEDED", "请求冲突", 409)

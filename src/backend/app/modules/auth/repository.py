@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
@@ -45,21 +45,19 @@ class SqlAuthRepository:
         self, username: str, display_name: str, password: str,
         token_hash: str, csrf_token: str, expires_at: datetime,
     ) -> UserRecord:
-        try:
-            async with self.sessions.begin() as session:
-                user = User(
-                    username=username, display_name=display_name, password=password
-                )
-                session.add(user)
-                await session.flush()
-                session.add(AuthSession(
-                    user_id=user.id, token_hash=token_hash,
-                    csrf_token=csrf_token, expires_at=expires_at,
-                ))
-                await session.flush()
-                return record(user)
-        except IntegrityError as error:
-            raise AppError("USERNAME_TAKEN", "用户名已被使用", 409) from error
+        async with self.sessions.begin() as session:
+            user = await session.scalar(
+                insert(User).values(username=username, display_name=display_name, password=password)
+                .on_conflict_do_nothing(index_elements=[User.username]).returning(User)
+            )
+            if user is None:
+                raise AppError("USERNAME_TAKEN", "用户名已被使用", 409)
+            session.add(AuthSession(
+                user_id=user.id, token_hash=token_hash,
+                csrf_token=csrf_token, expires_at=expires_at,
+            ))
+            await session.flush()
+            return record(user)
 
     async def by_username(self, username: str) -> UserRecord | None:
         async with self.sessions() as session:
@@ -81,13 +79,14 @@ class SqlAuthRepository:
 
     async def session(self, token_hash: str) -> SessionRecord | None:
         async with self.sessions() as session:
-            row = await session.scalar(
-                select(AuthSession).where(AuthSession.token_hash == token_hash)
-            )
+            row = (await session.execute(
+                select(AuthSession, User).join(User, AuthSession.user_id == User.id)
+                .where(AuthSession.token_hash == token_hash)
+            )).one_or_none()
             if row is None:
                 return None
-            user = await session.get(User, row.user_id)
-            return SessionRecord(row.id, record(user), row.csrf_token, row.expires_at) if user else None
+            auth_session, user = row
+            return SessionRecord(auth_session.id, record(user), auth_session.csrf_token, auth_session.expires_at)
 
     async def update_display_name(self, user_id: str, display_name: str) -> UserRecord:
         async with self.sessions.begin() as session:

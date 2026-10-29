@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from app.core.models import Model
 from app.modules.choice.schemas import ChoiceSnapshot
@@ -10,9 +10,8 @@ from app.modules.location.schemas import Origin
 from app.modules.places.schemas import Place
 from app.modules.preferences.schemas import (
     ALLOWED_FOOD_LIMIT,
-    BudgetInput,
+    Budget,
     Preferences,
-    PreferencesInput,
     PrefillSnapshot,
     SearchRadius,
 )
@@ -67,13 +66,7 @@ class DecisionRunResponse(Model):
 
 
 class DecisionCreateRequest(DecisionRequest):
-    preferences: PreferencesInput = Field(default_factory=PreferencesInput)
     prefill_snapshot: PrefillSnapshot
-
-    @model_validator(mode="after")
-    def valid_budget(self) -> DecisionCreateRequest:
-        BudgetInput.model_validate(self.preferences.budget_per_person.model_dump())
-        return self
 
 
 class SimpleRefinement(Model):
@@ -93,7 +86,7 @@ class ChangeRadiusRefinement(Model):
 
 class ChangeBudgetRefinement(Model):
     action: Literal["changeBudget"]
-    value: BudgetInput
+    value: Budget
 
 
 RefinementRequest = Annotated[

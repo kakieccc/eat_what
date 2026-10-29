@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
-from dataclasses import dataclass, field
-from typing import Protocol, TypeVar, cast
+from dataclasses import dataclass
+from typing import Protocol, TypeVar
 
 from app.core.models import Model
 from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse
@@ -31,11 +31,12 @@ class ParentSnapshot:
     session_id: str
     excluded_place_keys: list[str]
     place_snapshots: list[dict[str, object]]
-    retry_state: State = field(default_factory=lambda: cast(State, {}))
+    retry_state: State
 
 
 class DecisionTransaction(Protocol):
     async def idempotency(self, endpoint: str, key: str) -> IdempotencySnapshot | None: ...
+    async def require_task_capacity(self, max_active: int, submissions_per_minute: int) -> None: ...
     async def record_idempotency(
         self, endpoint: str, key: str, digest: str, run_id: str, task_id: str
     ) -> None: ...
@@ -55,24 +56,20 @@ class DecisionTransaction(Protocol):
     async def enqueue(
         self,
         run_id: str,
-        kind: str,
         request_id: str,
         state: State,
-        parent_task_id: str | None = None,
     ) -> str: ...
 
 
 class DecisionRepository(Protocol):
-    def transaction(
-        self, user_id: str, lock_key: str
-    ) -> AbstractAsyncContextManager[DecisionTransaction]: ...
+    def transaction(self, user_id: str) -> AbstractAsyncContextManager[DecisionTransaction]: ...
     async def read_for_user(self, user_id: str, run_id: str) -> DecisionRunResponse: ...
     async def stream_status(self, user_id: str, run_id: str) -> RunStreamStatus: ...
     async def prepare(self, claim: TaskClaim) -> tuple[str, str, str, State, int]: ...
     async def complete(
         self, claim: TaskClaim, state: State, run_id: str, duration_ms: int
     ) -> None: ...
-    async def fail(self, claim: TaskClaim, code: str, message: str) -> bool: ...
+    async def fail(self, claim: TaskClaim, code: str, message: str, retryable: bool) -> bool: ...
 
 
 T = TypeVar("T", bound=Model)
@@ -88,6 +85,6 @@ class FoodDecisionLlm(Protocol):
         self,
         places: list[Place],
         request: DecisionRequest,
-        action: str = "",
-        old_cuisines: list[str] | None = None,
+        action: str,
+        old_cuisines: list[str],
     ) -> list[Place]: ...

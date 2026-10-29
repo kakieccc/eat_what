@@ -26,13 +26,13 @@ async def list_places(
     limit: Annotated[int, Query(ge=1, le=30)] = 20,
     keywords: Annotated[list[str] | None, Query(max_length=5)] = None,
 ) -> Envelope[list[Place]]:
-    places = await services.places.search(
+    result = await services.places.search(
         Origin(latitude=latitude, longitude=longitude, address=address),
         radius_meters,
         limit,
         keywords or [],
     )
-    return Envelope(data=places)
+    return Envelope(data=result.places)
 
 
 @router.get("/{place_key}", responses=error_responses(401, 404, 422, 503))

@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.modules.decision.ports import FoodDecisionLlm
-from app.modules.decision.workflow.context import Emitter, StateSaver, StepStarted
+from app.modules.decision.workflow.context import Emitter, StepCallback
 from app.modules.decision.workflow.events import NodeCompleted, NodeStarted
 from app.modules.decision.workflow.nodes import (
     filter_places,
@@ -20,33 +20,17 @@ from app.modules.decision.workflow.nodes import (
 )
 from app.modules.decision.workflow.state import State
 from app.modules.places.service import PlaceService
+from app.modules.task.types import TaskClaim
 
 Graph = CompiledStateGraph[State, Any, State, State]
-
-
-def next_node(name: str, state: State) -> str:
-    if name == "filter_places" and not state.get("places"):
-        return END
-    transitions = {
-        "search_places": "filter_places",
-        "filter_places": "rerank_places",
-        "rerank_places": "select_diverse",
-        "select_diverse": "generate_explanations",
-        "generate_explanations": END,
-    }
-    return transitions[name]
-
-
-def route(state: State) -> str:
-    return state["next_node"]
 
 
 def build_graph(
     places: PlaceService,
     llm: FoodDecisionLlm,
     emit: Emitter,
-    step_started: StepStarted,
-    save_state: StateSaver,
+    step_started: StepCallback,
+    step_completed: StepCallback,
 ) -> Graph:
     builder = StateGraph(State)
 
@@ -55,22 +39,20 @@ def build_graph(
     ) -> Callable[[State], Awaitable[State]]:
         async def node(state: State) -> State:
             await step_started(state, name)
-            task_id = state["task_id"]
-            await emit(task_id, NodeStarted(node=name, label=label))
+            claim = TaskClaim(task_id=state["task_id"], lease_token=state["lease_token"])
+            await emit(claim, NodeStarted(node=name, label=label))
             started = time.monotonic()
             result = await fn(state)
-            updated = cast(State, {**state, **result})
-            updated["next_node"] = next_node(name, updated)
-            await save_state(updated, name)
+            await step_completed(state, name)
             await emit(
-                task_id,
+                claim,
                 NodeCompleted(
                     node=name,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     output_count=len(result["places"]) if "places" in result else None,
                 ),
             )
-            return {**result, "next_node": updated["next_node"]}
+            return result
 
         return node
 
@@ -83,6 +65,12 @@ def build_graph(
     ]
     for name, label, fn in definitions:
         builder.add_node(name, RunnableLambda(wrapped(name, label, fn)))
-        builder.add_conditional_edges(name, route)
-    builder.add_conditional_edges(START, route)
+    builder.add_edge(START, "search_places")
+    builder.add_edge("search_places", "filter_places")
+    builder.add_conditional_edges(
+        "filter_places", lambda state: "rerank_places" if state["places"] else END
+    )
+    builder.add_edge("rerank_places", "select_diverse")
+    builder.add_edge("select_diverse", "generate_explanations")
+    builder.add_edge("generate_explanations", END)
     return cast(Graph, builder.compile())

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from starlette.responses import StreamingResponse
 
 from app.api.dependencies import ContainerDependency, IdempotencyDependency
@@ -19,7 +21,12 @@ from app.modules.decision.sse import encode
 router = APIRouter(prefix="/decision-runs", tags=["decision-runs"])
 
 
-@router.post("", status_code=201, responses=error_responses(401, 403, 409, 422, 503))
+async def stream_connection(services: ContainerDependency, user: CurrentUserDependency) -> AsyncIterator[None]:
+    async with services.decision_streams.connection(user.user.id):
+        yield
+
+
+@router.post("", status_code=201, responses=error_responses(401, 403, 409, 422, 429, 503))
 async def create_decision_run(
     body: DecisionCreateRequest,
     request: Request,
@@ -47,13 +54,14 @@ async def get_decision_run(
 @router.get(
     "/{run_id}/events",
     response_class=StreamingResponse,
-    responses=error_responses(401, 404, 409, 422, 503),
+    responses=error_responses(401, 404, 409, 422, 429, 503),
 )
 async def stream_decision_run_events(
     run_id: UUID,
     request: Request,
     services: ContainerDependency,
     user: CurrentUserDependency,
+    _connection: Annotated[None, Depends(stream_connection, scope="request")],
 ) -> StreamingResponse:
     await services.decision_queries.stream_status(user.user.id, str(run_id))
     return StreamingResponse(
@@ -72,7 +80,7 @@ async def stream_decision_run_events(
 @router.post(
     "/{run_id}/refinements",
     status_code=201,
-    responses=error_responses(400, 401, 403, 404, 409, 422, 503),
+    responses=error_responses(400, 401, 403, 404, 409, 422, 429, 503),
 )
 async def create_decision_refinement(
     run_id: UUID,
@@ -90,7 +98,7 @@ async def create_decision_refinement(
     return Envelope(data=await services.decision_queries.get_for_user(user.user.id, child_id))
 
 
-@router.post("/{run_id}/retry", status_code=201, responses=error_responses(401, 403, 404, 409, 422, 503))
+@router.post("/{run_id}/retry", status_code=201, responses=error_responses(401, 403, 404, 409, 422, 429, 503))
 async def retry_decision_run(
     run_id: UUID,
     request: Request,

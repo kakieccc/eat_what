@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from pydantic import TypeAdapter
 
@@ -13,20 +14,47 @@ from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.decision.workflow.events import (
     DecisionEvent,
     Heartbeat,
+    ProgressEvent,
     ResultEvent,
     RunFailed,
     WorkflowError,
 )
 from app.modules.task.ports import TaskStore
 
-EVENT_ADAPTER: TypeAdapter[DecisionEvent] = TypeAdapter(DecisionEvent)
+EVENT_ADAPTER: TypeAdapter[ProgressEvent] = TypeAdapter(ProgressEvent)
 
 
 class DecisionStreamService:
-    def __init__(self, tasks: TaskStore, queries: DecisionQueryService, auth: AuthService) -> None:
+    def __init__(
+        self, tasks: TaskStore, queries: DecisionQueryService, auth: AuthService,
+        max_per_user: int = 2, max_connections: int = 8,
+    ) -> None:
         self.tasks = tasks
         self.queries = queries
         self.auth = auth
+        self.max_per_user = max_per_user
+        self.max_connections = max_connections
+        self._connections: dict[str, int] = {}
+        self._connection_count = 0
+
+    @asynccontextmanager
+    async def connection(self, user_id: str) -> AsyncIterator[None]:
+        count = self._connections.get(user_id, 0)
+        if count >= self.max_per_user:
+            raise AppError("USER_STREAM_LIMIT_REACHED", "当前账号的实时进度连接已满", 429, True, retry_after=2)
+        if self._connection_count >= self.max_connections:
+            raise AppError("STREAM_CAPACITY_REACHED", "实时进度连接已满", 503, True, retry_after=2)
+        self._connections[user_id] = count + 1
+        self._connection_count += 1
+        try:
+            yield
+        finally:
+            remaining = self._connections[user_id] - 1
+            if remaining:
+                self._connections[user_id] = remaining
+            else:
+                del self._connections[user_id]
+            self._connection_count -= 1
 
     async def stream(
         self, user_id: str, run_id: str, token: str | None
@@ -47,12 +75,8 @@ class DecisionStreamService:
                     for row in await self.tasks.events(current_task_id, last_sequence):
                         event = EVENT_ADAPTER.validate_python(row.payload)
                         last_sequence = row.sequence
-                        if event.type == "result":
-                            data = await self.queries.get_for_user(user_id, run_id)
-                            yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
-                        else:
-                            yield event
-                        if event.type in {"result", "runFailed"}:
+                        yield event
+                        if event.type == "runFailed":
                             return
                 if status.status == "completed":
                     data = await self.queries.get_for_user(user_id, run_id)

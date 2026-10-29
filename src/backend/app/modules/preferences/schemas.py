@@ -21,8 +21,8 @@ ALLOWED_FOOD_LIMIT = 5
 
 
 class Budget(Model):
-    min: Decimal | None = Field(default=None, ge=0, le=10000)
-    max: Decimal | None = Field(default=None, ge=0, le=10000)
+    min: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
+    max: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
 
     @field_serializer("min", "max", when_used="json")
     def decimal_string(self, value: Decimal | None) -> str | None:
@@ -35,18 +35,12 @@ class Budget(Model):
         return self
 
 
-class BudgetInput(Budget):
-    min: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
-    max: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
-
-
-# Stored snapshots retain their original food lists; new writes use PreferencesInput.
 class Preferences(Model):
     budget_per_person: Budget = Field(default_factory=Budget)
     radius_meters: SearchRadius = 2000
     excluded_foods: list[str] = Field(default_factory=list, max_length=12)
 
-    allowed_foods: list[str] = Field(default_factory=list, max_length=12)
+    allowed_foods: list[str] = Field(default_factory=list, max_length=ALLOWED_FOOD_LIMIT)
 
     @model_validator(mode="after")
     def categories(self) -> Preferences:
@@ -64,15 +58,11 @@ class AccountPreferences(Preferences):
     request_text: str = Field(default="", max_length=1000)
 
 
-class PreferencesInput(Preferences):
-    allowed_foods: list[str] = Field(default_factory=list, max_length=ALLOWED_FOOD_LIMIT)
-
-
 class PreferenceOverrides(Model):
-    budget_per_person: BudgetInput | None = None
+    budget_per_person: Budget | None = None
     radius_meters: SearchRadius | None = None
     request_text: str | None = Field(default=None, max_length=1000)
-    allowed_foods: list[str] | None = Field(default=None, max_length=12)
+    allowed_foods: list[str] | None = Field(default=None, max_length=ALLOWED_FOOD_LIMIT)
     excluded_foods: list[str] | None = Field(default=None, max_length=12)
 
     @model_serializer(mode="wrap")
@@ -90,13 +80,9 @@ class PreferenceOverrides(Model):
         return self
 
 
-class PreferenceOverridesInput(PreferenceOverrides):
-    allowed_foods: list[str] | None = Field(default=None, max_length=ALLOWED_FOOD_LIMIT)
-
-
 class PreferencesUpdate(Model):
     revision: int = Field(ge=0)
-    overrides: PreferenceOverridesInput
+    overrides: PreferenceOverrides
 
 
 class LearningStatus(Model):
@@ -121,7 +107,7 @@ class PrefillSnapshot(Model):
 
 
 class LearnedBudget(Model):
-    value: BudgetInput
+    value: Budget
     sample_ids: list[str] = Field(min_length=3, max_length=20)
 
 

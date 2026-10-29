@@ -5,7 +5,7 @@ from datetime import timedelta
 from typing import Any, cast
 
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -17,10 +17,18 @@ from app.modules.task.models import Task, TaskEvent, TaskStatus, TaskStep
 from app.modules.task.types import EventRecord, TaskClaim
 
 
-def json_payload(value: BaseModel | dict[str, Any]) -> dict[str, object]:
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    return dict(value)
+async def record_event(
+    session: AsyncSession, task_id: str, event: BaseModel
+) -> None:
+    # Callers hold the task row lock to serialize event sequences.
+    payload = event.model_dump(mode="json")
+    sequence = await session.scalar(
+        select(func.max(TaskEvent.sequence)).where(TaskEvent.task_id == task_id)
+    )
+    session.add(TaskEvent(
+        task_id=task_id, sequence=(sequence or 0) + 1,
+        event_type=str(payload["type"]), payload=payload,
+    ))
 
 
 class TaskStore:
@@ -46,11 +54,9 @@ class TaskStore:
                     run.status = "failed"
                     run.error_code = task.error_code
                     run.completed_at = current
-                sequence = await session.scalar(select(func.max(TaskEvent.sequence)).where(TaskEvent.task_id == task.id))
-                session.add(TaskEvent(
-                    task_id=task.id, sequence=(sequence or 0) + 1, event_type="runFailed",
-                    payload=RunFailed(error=WorkflowError(code=task.error_code, message=task.error_message, retryable=True)).model_dump(mode="json"),
-                ))
+                await record_event(session, task.id, RunFailed(error=WorkflowError(
+                    code=task.error_code, message=task.error_message, retryable=True,
+                )))
 
     async def claim(self, lease_seconds: int) -> TaskClaim | None:
         current = now()
@@ -70,9 +76,10 @@ class TaskStore:
             )
             for task in expired:
                 task.status = TaskStatus.queued.value
-                task.phase = task.phase or "queued"
+                task.phase = "queued"
                 task.lease_token = None
                 task.lease_until = None
+                await session.execute(delete(TaskStep).where(TaskStep.task_id == task.id))
 
             selected = await session.scalar(
                 select(Task)
@@ -94,22 +101,24 @@ class TaskStore:
             task.lease_token = token
             task.lease_until = current + timedelta(seconds=lease_seconds)
             task.attempts += 1
-            task.started_at = task.started_at or current
+            task.started_at = current
             task.completed_at = None
             return TaskClaim(task_id=task.id, lease_token=token)
 
     async def renew(self, claim: TaskClaim, lease_seconds: int) -> None:
-        result = await self._execute_update(
-            update(Task)
-            .where(
-                Task.id == claim.task_id,
-                Task.lease_token == claim.lease_token,
-                Task.status == TaskStatus.running.value,
+        async with self.sessions.begin() as session:
+            result = await session.execute(
+                update(Task)
+                .where(
+                    Task.id == claim.task_id,
+                    Task.lease_token == claim.lease_token,
+                    Task.status == TaskStatus.running.value,
+                    Task.lease_until > now(),
+                )
+                .values(lease_until=now() + timedelta(seconds=lease_seconds))
             )
-            .values(lease_until=now() + timedelta(seconds=lease_seconds))
-        )
-        if not result:
-            raise LostTaskLease("任务执行权已失效")
+            if not cast(CursorResult[Any], result).rowcount:
+                raise LostTaskLease("任务执行权已失效")
 
     async def start_step(self, claim: TaskClaim, key: str) -> None:
         current = now()
@@ -139,58 +148,22 @@ class TaskStore:
             step.completed_at = None
             task.phase = key
 
-    async def save_state(
-        self,
-        claim: TaskClaim,
-        state: dict[str, object],
-        phase: str,
-    ) -> None:
-        current = now()
-        persisted = self._strip_runtime_state(state)
+    async def complete_step(self, claim: TaskClaim, key: str) -> None:
         async with self.sessions.begin() as session:
             task = await self._owned(session, claim)
-            task.state = persisted
-            task.phase = phase
-            await session.execute(update(DecisionRun).where(DecisionRun.id == task.decision_run_id).values(
-                duration_ms=func.greatest(DecisionRun.duration_ms, task.elapsed_ms()),
-            ))
             step = await session.scalar(
                 select(TaskStep)
-                .where(TaskStep.task_id == task.id, TaskStep.key == phase)
+                .where(TaskStep.task_id == task.id, TaskStep.key == key)
                 .with_for_update()
             )
-            if step is None:
-                ordinal = await session.scalar(
-                    select(func.max(TaskStep.ordinal)).where(TaskStep.task_id == task.id)
-                )
-                step = TaskStep(
-                    task_id=task.id,
-                    key=phase,
-                    ordinal=(ordinal + 1) if ordinal is not None else 0,
-                )
-                session.add(step)
+            assert step is not None
             step.status = "succeeded"
-            step.completed_at = current
+            step.completed_at = now()
 
-    async def append_event(self, task_id: str, event: BaseModel | dict[str, Any]) -> None:
-        payload = json_payload(event)
+    async def append_event(self, claim: TaskClaim, event: BaseModel) -> None:
         async with self.sessions.begin() as session:
-            task = await session.scalar(select(Task).where(Task.id == task_id).with_for_update())
-            if task is None:
-                raise LookupError(f"Task not found: {task_id}")
-            if task.status == TaskStatus.superseded.value:
-                return
-            sequence = await session.scalar(
-                select(func.max(TaskEvent.sequence)).where(TaskEvent.task_id == task_id)
-            )
-            session.add(
-                TaskEvent(
-                    task_id=task_id,
-                    sequence=(sequence or 0) + 1,
-                    event_type=str(payload["type"]),
-                    payload=payload,
-                )
-            )
+            task = await self._owned(session, claim)
+            await record_event(session, task.id, event)
 
     async def events(self, task_id: str, after: int = 0) -> list[EventRecord]:
         async with self.sessions() as session:
@@ -214,18 +187,10 @@ class TaskStore:
                 Task.id == claim.task_id,
                 Task.lease_token == claim.lease_token,
                 Task.status == TaskStatus.running.value,
+                Task.lease_until > now(),
             )
             .with_for_update()
         )
         if task is None:
             raise LostTaskLease("任务执行权已失效")
         return task
-
-    async def _execute_update(self, statement: Any) -> bool:
-        async with self.sessions.begin() as session:
-            result = await session.execute(statement)
-            return bool(cast(CursorResult[Any], result).rowcount)
-
-    @staticmethod
-    def _strip_runtime_state(state: dict[str, object]) -> dict[str, object]:
-        return {key: value for key, value in state.items() if key != "lease_token"}

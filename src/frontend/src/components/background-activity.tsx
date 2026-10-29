@@ -90,7 +90,10 @@ export function BackgroundActivity() {
         if (!current()) return;
         useDraft.getState().setJob({
           ...job,
-          status: "failed",
+          status: error instanceof ApiError && (
+            (error.status >= 400 && error.status < 500) || error.code === "QUEUE_FULL"
+          )
+            ? "rejected" : "failed",
           error: error instanceof Error ? error.message : "提交失败",
         });
         if (job.runId)
@@ -128,6 +131,7 @@ export function BackgroundActivity() {
       if (!current()) return;
       setStreamingRunId(runId);
       waitForActivity();
+      if (event.type === "runStarted") setProgress({ runId, steps: [], error: "" });
       if (["runStarted", "nodeStarted", "nodeCompleted"].includes(event.type))
         client.setQueryData<Run>(["run", runId], (previous) =>
           previous?.status === "pending" ? { ...previous, status: "running" } : previous,
@@ -173,7 +177,9 @@ export function BackgroundActivity() {
         setProgress((previous) => ({
           runId,
           steps: previous.runId === runId ? previous.steps : [],
-          error: error instanceof ApiError ? error.message : "500 Error：进度连接中断，已改为查询结果。",
+          error: error instanceof ApiError && ["USER_STREAM_LIMIT_REACHED", "STREAM_CAPACITY_REACHED"].includes(error.code)
+            ? "实时进度连接已满，已改为查询结果。"
+            : error instanceof ApiError ? error.message : "500 Error：进度连接中断，已改为查询结果。",
         }));
       }
     }).finally(() => clearTimeout(idleTimer));
@@ -221,21 +227,23 @@ export function BackgroundActivity() {
     ? job.kind === "choice"
       ? "正在保存选择…"
       : "正在提交选餐任务…"
-    : job?.status === "failed"
-      ? "提交未完成，请重试确认"
-      : saved
-        ? "选择已保存"
-        : query.error
-          ? "推荐状态读取失败"
-          : run?.status === "failed"
-            ? "推荐未完成"
-            : active
-              ? run?.status === "pending"
-                ? "选餐任务已排队"
-                : "正在推荐餐厅"
-              : run
-                ? "推荐已完成"
-                : "正在读取任务状态…";
+    : job?.status === "rejected"
+      ? "任务未受理，请查看提示后重试"
+      : job?.status === "failed"
+        ? "提交未完成，请重试确认"
+        : saved
+          ? "选择已保存"
+          : query.error
+            ? "推荐状态读取失败"
+            : run?.status === "failed"
+              ? "推荐未完成"
+              : active
+                ? run?.status === "pending"
+                  ? "选餐任务已排队"
+                  : "正在推荐餐厅"
+                : run
+                  ? "推荐已完成"
+                  : "正在读取任务状态…";
   return (
     <aside className="background-activity" aria-label="选餐任务">
       <div className="activity-heading" role="status">
@@ -278,7 +286,7 @@ export function BackgroundActivity() {
                 .setJob({ ...job, status: "submitting", error: null })
             }
           >
-            {job.status === "failed" ? "重试提交" : "重新确认状态"}
+            {job.status === "failed" || job.status === "rejected" ? "重试提交" : "重新确认状态"}
           </Button>
         )}
         {runId && (

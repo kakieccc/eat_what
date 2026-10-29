@@ -28,7 +28,7 @@ class DiscoverySession(IdentityMixin, Base):
     seen_place_keys: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
     request_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    prefill_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    prefill_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
 
 
 class DecisionRun(IdentityMixin, Base):
@@ -81,6 +81,6 @@ class IdempotencyRecord(IdentityMixin, Base):
     request_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     response_status: Mapped[int] = mapped_column(Integer, default=200)
     response_body: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (UniqueConstraint("user_id", "endpoint", "idempotency_key"),)

@@ -10,7 +10,6 @@ from app.modules.decision.workflow.nodes.common import serialized
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
-from app.modules.preferences.rules import require_allowed_food_limit
 
 CANDIDATE_LIMIT = 10
 SEARCH_LIMIT = 8
@@ -19,7 +18,6 @@ SEARCH_LIMIT = 8
 def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
     async def search(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
-        require_allowed_food_limit(request.preferences.allowed_foods)
         keywords = list(dict.fromkeys(request.preferences.allowed_foods)) or [""]
         if "search_queue" in state:
             queue = list(state["search_queue"])
@@ -30,7 +28,7 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
         unique: dict[str, Place] = {p.id: p for p in state_places(state)}
         seen = set(state.get("search_seen_ids", []))
         seen.update(unique)
-        summary = dict(state.get("filter_summary", {}))
+        summary = dict(state["filter_summary"])
         calls = summary.get("searchRequests", 0)
         failures = summary.get("searchFailures", 0)
         last_error: AppError | None = None
@@ -41,7 +39,7 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
             word, page = queue.pop(0)
             calls += 1
             try:
-                batch = await places.search(
+                result = await places.search(
                     request.origin,
                     request.preferences.radius_meters,
                     limit=25,
@@ -49,6 +47,8 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
                     page=page,
                     deadline=execution_deadline.get(),
                 )
+                batch = result.places
+                has_more = result.has_more
             except AppError as error:
                 deadline = execution_deadline.get()
                 if deadline is not None and asyncio.get_running_loop().time() >= deadline:
@@ -58,16 +58,17 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
                 failures += 1
                 last_error = error
                 batch = []
+                has_more = False
             fresh = []
             for place in batch:
                 if place.id not in seen:
                     seen.add(place.id)
                     fresh.append(place)
-            kept, counts = eligible(fresh, request, state.get("excluded", []))
+            kept, counts = eligible(fresh, request, state["excluded"])
             unique.update((p.id, p) for p in kept)
             for key, count in counts.items():
                 summary[key] = summary.get(key, 0) + count
-            if len(batch) == 25:
+            if has_more:
                 queue.append((word, page + 1))
             if not queue and len(unique) < CANDIDATE_LIMIT and not fallback_used:
                 queue.append(("", 1))

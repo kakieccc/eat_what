@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.modules.location.schemas import Point
-from app.modules.places.schemas import Place
+from app.modules.places.schemas import Place, PlaceSearchPage
 
 
 class PlaceRepository(Protocol):
@@ -20,7 +20,7 @@ class GeoPlaceProvider(Protocol):
         *,
         deadline: float | None = None,
         page: int = 1,
-    ) -> list[Place]: ...
+    ) -> PlaceSearchPage: ...
     async def detail(
         self, external_id: str, origin: Point, *, deadline: float | None = None
     ) -> Place: ...

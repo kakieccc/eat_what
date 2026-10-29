@@ -63,8 +63,8 @@ def eligible(
 def score_places(
     places: list[Place],
     pref: DecisionRequest,
-    action: str = "",
-    recent: list[str] | None = None,
+    action: str,
+    recent: list[str],
 ) -> list[Place]:
     conditions = pref.preferences
     weights = WEIGHTS.copy()
@@ -94,7 +94,7 @@ def score_places(
             distance_cost=distance_score,
             budget_match=budget_score,
             rating_quality=p.rating * 20 if p.rating is not None else 40,
-            novelty=30 if p.id in (recent or []) else 100,
+            novelty=30 if p.id in recent else 100,
             data_completeness=100
             * sum(
                 [

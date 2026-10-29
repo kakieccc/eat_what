@@ -3,6 +3,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 
 from app.core.concurrency import deadline_after
@@ -11,15 +12,22 @@ from app.infrastructure.amap import mappers
 from app.infrastructure.amap.cache import AmapCache
 from app.infrastructure.amap.client import AmapClient, unavailable
 from app.infrastructure.amap.schemas import (
+    FetchedResponse,
     PlaceResponse,
     RawResponse,
     ReverseResponse,
     TipsResponse,
 )
 from app.modules.location.schemas import Origin, Point
-from app.modules.places.schemas import Place
+from app.modules.places.schemas import Place, PlaceSearchPage
 
 log = logging.getLogger("food.amap")
+
+
+@dataclass
+class InFlight:
+    task: asyncio.Task[FetchedResponse]
+    waiters: int = 0
 
 
 class AmapGeoPlaceProvider:
@@ -27,6 +35,7 @@ class AmapGeoPlaceProvider:
         self.client = client
         self.cache = cache
         self.timeout_seconds = timeout_seconds
+        self._inflight: dict[str, InFlight] = {}
 
     @asynccontextmanager
     async def _budget(self, operation: str, deadline: float | None) -> AsyncIterator[float]:
@@ -50,14 +59,13 @@ class AmapGeoPlaceProvider:
             )
             raise unavailable() from None
 
-    async def _fetch[Response: RawResponse, Result](
+    async def _cached[Response: RawResponse, Result](
         self,
         operation: str,
         params: dict[str, str],
         schema: type[Response],
         mapper: Callable[[Response, datetime], Result],
-        deadline: float,
-    ) -> Result:
+    ) -> tuple[FetchedResponse, Result] | None:
         started = asyncio.get_running_loop().time()
         cached = await self.cache.read(operation, params)
         if cached is not None:
@@ -84,25 +92,63 @@ class AmapGeoPlaceProvider:
                         }
                     )
                 )
-                return result
-        entry = await self.client.request(operation, params, deadline=deadline)
+                return cached, result
+        return None
+
+    async def _load[Response: RawResponse, Result](
+        self, operation: str, params: dict[str, str], schema: type[Response],
+        mapper: Callable[[Response, datetime], Result],
+    ) -> FetchedResponse:
+        # The shared operation has its own budget; each waiter keeps its caller's deadline.
+        async with self._budget(operation, None) as until:
+            cached = await self._cached(operation, params, schema, mapper)
+            if cached is not None:
+                return cached[0]
+            entry = await self.client.request(operation, params, deadline=until)
+            try:
+                result = mapper(schema.model_validate(entry.payload), entry.fetched_at)
+            except (ValueError, TypeError):
+                log.warning(json.dumps({
+                    "event": "amapOperationFailed", "operation": operation, "error": "AMAP_SCHEMA_ERROR",
+                }))
+                raise AppError("AMAP_SCHEMA_ERROR", "地图响应格式异常", 502) from None
+            if asyncio.get_running_loop().time() >= until:
+                raise TimeoutError
+            empty = not result.places if isinstance(result, PlaceSearchPage) else not result
+            await self.cache.write(operation, params, entry, empty=empty)
+            return entry
+
+    async def _fetch[Response: RawResponse, Result](
+        self, operation: str, params: dict[str, str], schema: type[Response],
+        mapper: Callable[[Response, datetime], Result],
+    ) -> Result:
+        cached = await self._cached(operation, params, schema, mapper)
+        if cached is not None:
+            return cached[1]
+        key = self.cache.key(operation, params)
+        flight = self._inflight.get(key)
+        if flight is None:
+            flight = InFlight(asyncio.create_task(self._load(operation, params, schema, mapper)))
+            self._inflight[key] = flight
+
+            def finished(task: asyncio.Task[FetchedResponse]) -> None:
+                if self._inflight.get(key) is flight:
+                    del self._inflight[key]
+                if not task.cancelled():
+                    task.exception()
+
+            flight.task.add_done_callback(finished)
+        flight.waiters += 1
         try:
-            result = mapper(schema.model_validate(entry.payload), entry.fetched_at)
-        except (ValueError, TypeError):
-            log.warning(
-                json.dumps(
-                    {
-                        "event": "amapOperationFailed",
-                        "operation": operation,
-                        "error": "AMAP_SCHEMA_ERROR",
-                    }
-                )
-            )
-            raise AppError("AMAP_SCHEMA_ERROR", "地图响应格式异常", 502) from None
-        if asyncio.get_running_loop().time() >= deadline:
-            raise TimeoutError
-        await self.cache.write(operation, params, entry, empty=not result)
-        return result
+            entry = await asyncio.shield(flight.task)
+            return mapper(schema.model_validate(entry.payload), entry.fetched_at)
+        finally:
+            flight.waiters -= 1
+            if flight.waiters == 0 and not flight.task.done():
+                if self._inflight.get(key) is flight:
+                    del self._inflight[key]
+                flight.task.cancel()
+                await asyncio.gather(flight.task, return_exceptions=True)
 
     async def search(
         self,
@@ -113,9 +159,9 @@ class AmapGeoPlaceProvider:
         *,
         deadline: float | None = None,
         page: int = 1,
-    ) -> list[Place]:
+    ) -> PlaceSearchPage:
         operation = "/v3/place/around"
-        async with self._budget(operation, deadline) as until:
+        async with self._budget(operation, deadline):
             return await self._fetch(
                 operation,
                 {
@@ -129,21 +175,22 @@ class AmapGeoPlaceProvider:
                     "keywords": keywords,
                 },
                 PlaceResponse,
-                lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-                until,
+                lambda response, fetched_at: PlaceSearchPage(
+                    places=mappers.places(response, origin, fetched_at),
+                    has_more=len(response.pois) == min(limit, 25),
+                ),
             )
 
     async def detail(
         self, external_id: str, origin: Point, *, deadline: float | None = None
     ) -> Place:
         operation = "/v3/place/detail"
-        async with self._budget(operation, deadline) as until:
+        async with self._budget(operation, deadline):
             rows = await self._fetch(
                 operation,
                 {"id": external_id, "extensions": "all"},
                 PlaceResponse,
                 lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-                until,
             )
             if not rows:
                 raise AppError("PLACE_NOT_FOUND", "地点详情暂不可用", 404)
@@ -151,24 +198,22 @@ class AmapGeoPlaceProvider:
 
     async def reverse(self, origin: Point, *, deadline: float | None = None) -> Origin:
         operation = "/v3/geocode/regeo"
-        async with self._budget(operation, deadline) as until:
+        async with self._budget(operation, deadline):
             return await self._fetch(
                 operation,
                 {"location": mappers.coordinates(origin), "extensions": "base"},
                 ReverseResponse,
                 lambda response, _: mappers.reverse(response, origin),
-                until,
             )
 
     async def tips(self, keywords: str, *, deadline: float | None = None) -> list[Origin]:
         operation = "/v3/assistant/inputtips"
-        async with self._budget(operation, deadline) as until:
+        async with self._budget(operation, deadline):
             return await self._fetch(
                 operation,
                 {"keywords": keywords, "datatype": "poi"},
                 TipsResponse,
                 lambda response, _: mappers.tips(response),
-                until,
             )
 
     @staticmethod

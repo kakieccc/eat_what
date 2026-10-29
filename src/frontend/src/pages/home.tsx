@@ -5,12 +5,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PreferencesForm } from "../components/preferences-form";
 import { Button } from "../components/ui/button";
 import { useDraft } from "../lib/store";
-import { readRecommendation } from "../lib/recommendations";
+import { useMealBusy } from "../lib/recommendations";
 import { useAuth } from "../lib/auth";
 import { configError, request } from "../lib/api";
 import {
   type Preferences,
-  type Run,
   type AccountPreferences,
   type LearnableField,
   defaults,
@@ -51,19 +50,7 @@ export function Home() {
       );
     }
   }, [draft, saved.data, saved.isError, saved.isFetching]);
-  const client = useQueryClient();
-  const runQuery = useQuery<Run>({
-    queryKey: ["run", draft.runId],
-    queryFn: ({ signal }) => readRecommendation(client, draft.runId!, signal),
-    enabled: false,
-  });
-  const run = runQuery.data;
-  const busy =
-    draft.job?.status === "submitting" ||
-    (!!draft.runId &&
-      ((!run && !runQuery.isError) ||
-        run?.status === "pending" ||
-        run?.status === "running"));
+  const busy = useMealBusy();
   const submit = (preferences: Preferences) => {
     draft.setPreferences(preferences);
     if (!draft.origin) {
@@ -201,10 +188,9 @@ export function Profile() {
       {learning && (
         <p className="muted" role="status">
           已记录 {learning.mealCount} 餐，满 {learning.nextLearningAt}{" "}
-          餐再次总结。
-          {learning.status === "queued" || learning.status === "running"
-            ? " 正在总结偏好。"
-            : ""}
+          餐后进入每日总结。
+          {learning.status === "queued" ? " 等待每日偏好总结。" : ""}
+          {learning.status === "running" ? " 正在总结偏好。" : ""}
           {learning.status === "failed"
             ? " 上次总结失败，仍使用已有默认值。"
             : ""}
@@ -214,7 +200,7 @@ export function Profile() {
         </p>
       )}
       <p className="muted">
-        只自动学习预算、距离和补充说明；限定与排除食物由你设置。修改后保存会固定该字段。
+        自动偏好每天定期总结，只学习预算、距离和补充说明；限定与排除食物由你设置。手动修改保存后立即更新账户偏好，本餐草稿保持原样。
       </p>
       {query.isError && query.data && (
         <p className="error" role="alert">

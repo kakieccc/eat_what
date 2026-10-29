@@ -1,47 +1,25 @@
 const channelName = "food-auth-changed-v1";
 const source = crypto.randomUUID();
 
-function openChannel() {
-  try {
-    return typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel(channelName);
-  } catch {
-    return null;
-  }
+export async function withAuthLock<T>(action: () => Promise<T>): Promise<T> {
+  if (!navigator.locks)
+    throw new Error("当前浏览器无法安全切换账号，请升级浏览器并通过 HTTPS 访问");
+  return navigator.locks.request("food-auth-session-v1", action);
 }
 
 export function notifyAuthChanged() {
-  const channel = openChannel();
-  if (channel) {
-    try {
-      channel.postMessage(source);
-      return;
-    } catch {
-      // Fall back to storage if the channel cannot send.
-    } finally {
-      channel.close();
-    }
-  }
+  const channel = new BroadcastChannel(channelName);
   try {
-    localStorage.setItem(channelName, crypto.randomUUID());
-  } catch {
-    // Storage can be disabled by browser privacy settings.
+    channel.postMessage(source);
+  } finally {
+    channel.close();
   }
 }
 
 export function watchAuthChanges(recheck: () => void) {
-  const channel = openChannel();
-  if (channel) {
-    channel.onmessage = (event: MessageEvent<unknown>) => {
-      if (typeof event.data === "string" && event.data !== source) recheck();
-    };
-  }
-  const onStorage = (event: StorageEvent) => {
-    if (event.storageArea === localStorage && event.key === channelName && event.newValue !== null)
-      recheck();
+  const channel = new BroadcastChannel(channelName);
+  channel.onmessage = (event: MessageEvent<unknown>) => {
+    if (typeof event.data === "string" && event.data !== source) recheck();
   };
-  window.addEventListener("storage", onStorage);
-  return () => {
-    channel?.close();
-    window.removeEventListener("storage", onStorage);
-  };
+  return () => channel.close();
 }

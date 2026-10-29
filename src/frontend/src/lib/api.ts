@@ -50,6 +50,8 @@ export class ApiError extends Error {
     message: string,
     public status: number,
     public code: string,
+    public retryable = false,
+    public requestId: string | null = null,
   ) {
     super(message);
   }
@@ -70,9 +72,41 @@ export async function fetchResponse(path: string, options: RequestInit): Promise
     throw new Error(configError ?? serverErrorMessage);
   }
   requireCurrentSession(version, signal);
-  if (response.status >= 500)
-    throw new ApiError(serverErrorMessage, response.status, "INTERNAL_ERROR");
   return response;
+}
+
+const errorEnvelopeSchema = z.object({
+  success: z.literal(false),
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    details: z.object({ retryable: z.boolean().optional() }).optional(),
+  }),
+  meta: z.object({ requestId: z.string().optional() }).optional(),
+});
+
+export async function responseData(response: Response, signal?: AbortSignal): Promise<unknown> {
+  const version = getSessionVersion();
+  const payload = await response.json().catch((error: unknown) => {
+    requireCurrentSession(version, signal);
+    if (response.ok) throw error;
+    return null;
+  });
+  requireCurrentSession(version, signal);
+  if (!response.ok || !payload?.success) {
+    const parsed = errorEnvelopeSchema.safeParse(payload);
+    const envelope = parsed.success ? parsed.data : null;
+    const code = envelope?.error.code ?? (response.status >= 500 ? "INTERNAL_ERROR" : "UNKNOWN");
+    if (response.status === 401 && code === "AUTH_REQUIRED") handleUnauthorized();
+    throw new ApiError(
+      errorMessage(code, envelope?.error.message ?? serverErrorMessage),
+      response.status,
+      code,
+      envelope?.error.details?.retryable ?? false,
+      envelope?.meta?.requestId ?? response.headers.get("X-Request-ID"),
+    );
+  }
+  return payload.data;
 }
 export async function request<T>(
   path: string,
@@ -101,14 +135,7 @@ export async function request<T>(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const payload = await response.json();
+  const data = await responseData(response, signal);
   requireCurrentSession(version, signal);
-  if (!response.ok || !payload.success) {
-    if (response.status === 401 && payload.error?.code === "AUTH_REQUIRED")
-      handleUnauthorized();
-    const code = payload.error?.code ?? "UNKNOWN";
-    const message = errorMessage(code, payload.error?.message);
-    throw new ApiError(message, response.status, code);
-  }
-  return schema ? schema.parse(payload.data) : (payload.data as T);
+  return schema ? schema.parse(data) : (data as T);
 }

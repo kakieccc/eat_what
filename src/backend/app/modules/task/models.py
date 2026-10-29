@@ -11,12 +11,6 @@ from app.core.clock import now
 from app.infrastructure.database.base import Base, IdentityMixin
 
 
-class TaskKind(StrEnum):
-    decision = "decision"
-    refinement = "refinement"
-    resume = "resume"
-
-
 class TaskStatus(StrEnum):
     queued = "queued"
     running = "running"
@@ -33,7 +27,6 @@ class Task(IdentityMixin, Base):
         ForeignKey("decision_runs.id"), nullable=False, index=True
     )
     parent_task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"))
-    kind: Mapped[str] = mapped_column(String(32), nullable=False, default=TaskKind.decision.value)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=TaskStatus.queued.value, index=True
     )

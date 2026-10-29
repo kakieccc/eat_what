@@ -9,8 +9,7 @@ from app.modules.decision.workflow.state import State
 def build(llm: FoodDecisionLlm) -> Callable[[State], Awaitable[State]]:
     async def rerank(state: State) -> State:
         request = DecisionRequest.model_validate(state["request"])
-        action = state.get("action", "")
-        ranked = await llm.rerank(places(state), request, action, state.get("old_cuisines", []))
+        ranked = await llm.rerank(places(state), request, state["action"], state["old_cuisines"])
         return {"places": serialized(ranked)}
 
     return rerank

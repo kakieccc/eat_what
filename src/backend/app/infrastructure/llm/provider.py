@@ -37,7 +37,6 @@ class OpenAICompatibleLlm:
                 raise AppError("LLM_INVALID_OUTPUT", "模型未返回完整结果", 502)
             return parsed
         except ValidationError as error:
-            # Exclude input, context and messages: they may contain user or provider content.
             description = schema.model_json_schema()
             known_fields = set(schema.model_fields)
             for definition in (description, *description.get("$defs", {}).values()):

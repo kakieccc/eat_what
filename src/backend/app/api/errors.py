@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
@@ -24,7 +25,10 @@ def error_response(request: Request, error: AppError) -> JSONResponse:
         },
         meta={"requestId": getattr(request.state, "request_id", "")},
     )
-    return JSONResponse(body.model_dump(mode="json", by_alias=True), status_code=error.status)
+    headers = {"Retry-After": str(error.retry_after)} if error.retry_after is not None else None
+    return JSONResponse(
+        body.model_dump(mode="json", by_alias=True), status_code=error.status, headers=headers,
+    )
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -40,7 +44,14 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(SQLAlchemyError)
-    async def database_error(request: Request, _: SQLAlchemyError) -> JSONResponse:
+    async def database_error(request: Request, error: SQLAlchemyError) -> JSONResponse:
+        original = error.orig if isinstance(error, DBAPIError) else error
+        log.error(json.dumps({
+            "event": "databaseError",
+            "exceptionType": type(error).__name__,
+            "sqlstate": getattr(original, "sqlstate", None),
+            "requestId": getattr(request.state, "request_id", ""),
+        }))
         return error_response(
             request,
             AppError("DEPENDENCY_UNAVAILABLE", "数据库暂时不可用", 503, True),
@@ -61,8 +72,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, error: Exception) -> JSONResponse:
         log.exception(
-            '{"event":"unhandledError","exceptionType":"%s"}',
-            type(error).__name__,
+            json.dumps({
+                "event": "unhandledError",
+                "exceptionType": type(error).__name__,
+                "requestId": getattr(request.state, "request_id", ""),
+            }),
         )
         return error_response(
             request,

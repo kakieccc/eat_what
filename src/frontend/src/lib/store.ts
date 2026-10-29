@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { z } from "zod";
 import { safeSessionStorage } from "./storage";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
@@ -41,29 +42,15 @@ interface Draft {
   reset: () => void;
 }
 
-function recoverDraft(value: unknown) {
-  const stored =
-    value && typeof value === "object"
-      ? (value as Record<string, unknown>)
-      : {};
-  const preferences = preferencesDraftSchema.safeParse(stored.preferences);
-  const origin = originSchema.safeParse(stored.origin);
-  const prefill = prefillSnapshotSchema.safeParse(stored.prefill);
-  const job = backgroundJobSchema.safeParse(stored.job);
-  return {
-    ownerId:
-      typeof stored.ownerId === "string" && stored.ownerId
-        ? stored.ownerId
-        : null,
-    hasDraft:
-      stored.hasDraft === true && preferences.success && prefill.success,
-    prefill: prefill.success ? prefill.data : null,
-    job: job.success ? job.data : null,
-    preferences: preferences.success ? preferences.data : defaults,
-    origin: origin.success ? origin.data : null,
-    runId: typeof stored.runId === "string" ? stored.runId : null,
-  };
-}
+const draftSchema = z.object({
+  ownerId: z.string().min(1).nullable(),
+  hasDraft: z.boolean(),
+  origin: originSchema.nullable(),
+  preferences: preferencesDraftSchema,
+  prefill: prefillSnapshotSchema.nullable(),
+  runId: z.string().nullable(),
+  job: backgroundJobSchema.nullable(),
+}).strict();
 export const useDraft = create<Draft>()(
   persist(
     (set) => ({
@@ -76,8 +63,6 @@ export const useDraft = create<Draft>()(
         set({
           preferences: preferencesDraftSchema.parse(preferences),
           hasDraft: true,
-          runId: null,
-          job: null,
           prefill: {
             values: structuredClone(accountDefaults(preferences)),
             source,
@@ -156,8 +141,11 @@ export const useDraft = create<Draft>()(
         runId,
         job,
       }),
-      migrate: () => recoverDraft(null),
-      merge: (stored, current) => ({ ...current, ...recoverDraft(stored) }),
+      merge: (stored, current) =>
+        stored === undefined ? current : { ...current, ...draftSchema.parse(stored) },
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) console.error("Unable to restore the saved draft", error);
+      },
     },
   ),
 );

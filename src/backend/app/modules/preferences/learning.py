@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from app.modules.decision.ports import StructuredLlm
@@ -11,7 +10,6 @@ from app.modules.preferences.schemas import (
     LearnedRadius,
     LearnedSoftPreference,
 )
-from app.modules.task.errors import LostTaskLease
 from app.modules.task.types import TaskClaim
 
 log = logging.getLogger("food.preferences")
@@ -52,39 +50,17 @@ def validate_evidence(result: LearnedPreferences, samples: list[MealEvidence]) -
 
 
 class PreferenceLearner:
-    def __init__(self, repository: MemoryRepository, llm: StructuredLlm, lease_seconds: int) -> None:
+    def __init__(self, repository: MemoryRepository, llm: StructuredLlm) -> None:
         self.repository = repository
         self.llm = llm
-        self.lease_seconds = lease_seconds
 
     async def execute_claim(self, claim: TaskClaim) -> None:
-        work = asyncio.create_task(self._learn(claim))
-        heartbeat = asyncio.create_task(self._heartbeat(claim))
-        try:
-            done, _ = await asyncio.wait({work, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
-            if heartbeat in done:
-                await heartbeat
-            result = await work
-            await self.repository.finish(claim, result)
-        except LostTaskLease:
-            log.info("Preference lease lost: %s", claim.task_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            log.warning("Preference learning failed: %s (%s)", claim.task_id, type(error).__name__)
-            try:
-                await self.repository.finish(claim, None)
-            except LostTaskLease:
-                pass
-        finally:
-            work.cancel()
-            heartbeat.cancel()
-            await asyncio.gather(work, heartbeat, return_exceptions=True)
+        result = await self._learn(claim)
+        await self.repository.finish(claim, result)
 
-    async def _heartbeat(self, claim: TaskClaim) -> None:
-        while True:
-            await asyncio.sleep(max(1, min(10, self.lease_seconds / 3)))
-            await self.repository.renew(claim, self.lease_seconds)
+    async def fail(self, claim: TaskClaim, error: Exception) -> None:
+        log.warning("Preference learning failed: %s (%s)", claim.task_id, type(error).__name__)
+        await self.repository.finish(claim, None)
 
     async def _learn(self, claim: TaskClaim) -> LearnedPreferences:
         samples = await self.repository.samples(claim)

@@ -1,23 +1,22 @@
 import type { StateStorage } from "zustand/middleware";
 
 let disabled = false;
-function disable() {
+function disable(error: unknown) {
+  if (!disabled) console.error("Session storage unavailable; changes remain in memory", error);
   disabled = true;
-  for (const key of ["food-draft-v1", "food-start"]) {
-    try { sessionStorage.removeItem(key); } catch { /* Storage may be inaccessible. */ }
-  }
+  try { sessionStorage.removeItem("food-draft-v1"); } catch { /* The storage failure was reported above. */ }
 }
 
 export const safeSessionStorage: StateStorage = {
   getItem(key) {
     if (disabled) return null;
-    try { return sessionStorage.getItem(key); } catch { disable(); return null; }
+    try { return sessionStorage.getItem(key); } catch (error) { disable(error); return null; }
   },
   setItem(key, value) {
     if (disabled) return;
-    try { sessionStorage.setItem(key, value); } catch { disable(); }
+    try { sessionStorage.setItem(key, value); } catch (error) { disable(error); }
   },
   removeItem(key) {
-    try { sessionStorage.removeItem(key); } catch { disable(); }
+    try { sessionStorage.removeItem(key); } catch (error) { disable(error); }
   },
 };

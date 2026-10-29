@@ -8,7 +8,7 @@ import { PlaceCard } from "../components/place-card";
 import { RadiusOptions } from "../components/radius-options";
 import { useDraft } from "../lib/store";
 import { ApiError, errorMessage } from "../lib/api";
-import { isDiscardedRun, readRecommendation } from "../lib/recommendations";
+import { isDiscardedRun, readRecommendation, useMealBusy } from "../lib/recommendations";
 import {
   fromDecisionRequest,
   type Run,
@@ -26,7 +26,7 @@ export function Discover() {
     undefined,
   );
   const [newBudget, setNewBudget] = useState("60");
-  const busy = draft.job?.status === "submitting";
+  const busy = useMealBusy();
   const runQuery = useQuery({
     queryKey: ["run", draft.runId],
     queryFn: ({ signal }) => readRecommendation(client, draft.runId!, signal),
@@ -91,10 +91,11 @@ export function Discover() {
           <Button asChild>
             <Link to={`/decision-runs/${run.decisionRunId}`}>查看已选餐厅</Link>
           </Button>
-          <Button variant="outline" asChild>
-            <Link to="/" onClick={() => draft.startNewMeal()}>
-              开始新的选餐
-            </Link>
+          <Button variant="outline" disabled={busy} onClick={() => {
+            draft.startNewMeal();
+            navigate("/");
+          }}>
+            开始新的选餐
           </Button>
         </section>
       </>
@@ -142,6 +143,7 @@ export function Discover() {
       {runQuery.error instanceof ApiError &&
         runQuery.error.code === "WORKFLOW_UPGRADED" && (
           <Button
+            disabled={busy}
             onClick={() => {
               draft.startNewMeal();
               navigate("/");
@@ -168,6 +170,7 @@ export function Discover() {
             按当前条件重试
           </Button>
           <Button
+            disabled={busy}
             onClick={() => {
               editRequest(run.request);
             }}

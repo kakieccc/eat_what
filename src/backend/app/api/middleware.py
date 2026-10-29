@@ -25,7 +25,7 @@ def register_middlewares(app: FastAPI, settings: Settings) -> None:
         allow_methods=["GET", "POST", "PUT", "PATCH"],
         allow_headers=["Accept", "Content-Type", "Idempotency-Key", "X-Request-ID", "X-CSRF-Token", "X-Auth-Intent"],
         allow_credentials=True,
-        expose_headers=["Location", "X-Request-ID"],
+        expose_headers=["Location", "X-Request-ID", "Retry-After"],
     )
 
     @app.middleware("http")

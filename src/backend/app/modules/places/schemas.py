@@ -36,3 +36,8 @@ class Place(Model):
     navigation_url: str | None = None
     candidate_id: str | None = None
     rank: int = 0
+
+
+class PlaceSearchPage(Model):
+    places: list[Place]
+    has_more: bool

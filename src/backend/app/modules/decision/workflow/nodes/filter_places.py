@@ -57,8 +57,7 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
 
         def ranked(candidates: list[Place]) -> list[Place]:
             return score_places(
-                candidates, request, state.get("action", ""),
-                state.get("recent", []),
+                candidates, request, state["action"], state["recent"],
             )
 
         async def detail_or_none(p: Place) -> Place | None:
@@ -79,7 +78,7 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
         pending = ranked(places(state))
         checked: set[str] = set()
         kept: list[Place] = []
-        summary = dict(state.get("filter_summary", {}))
+        summary = dict(state["filter_summary"])
         while len(kept) < CANDIDATE_LIMIT:
             if not pending:
                 more = await search_more({
@@ -95,7 +94,7 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
             checked.update(p.id for p in batch)
             details = await gather_cancel_on_error(*(detail_or_none(p) for p in batch))
             valid, counts = eligible(
-                [p for p in details if p is not None], request, state.get("excluded", [])
+                [p for p in details if p is not None], request, state["excluded"]
             )
             food_valid = await llm.filter_foods(valid, request)
             counts["foodRequirements"] = len(valid) - len(food_valid)

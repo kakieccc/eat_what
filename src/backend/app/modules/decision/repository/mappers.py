@@ -3,10 +3,6 @@ from app.modules.decision.schemas import DecisionRequest
 from app.modules.places.schemas import Place
 
 
-def session_values(request: DecisionRequest) -> dict[str, object]:
-    return {"request_snapshot": request.model_dump(mode="json")}
-
-
 def request_for_run(run: DecisionRun) -> DecisionRequest:
     return DecisionRequest.model_validate(run.effective_preferences)
 

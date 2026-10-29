@@ -4,7 +4,7 @@ from app.core.concurrency import deadline_after, gather_cancel_on_error
 from app.core.errors import AppError
 from app.modules.location.schemas import Point
 from app.modules.places.ports import GeoPlaceProvider, PlaceRepository
-from app.modules.places.schemas import Place
+from app.modules.places.schemas import Place, PlaceSearchPage
 from app.modules.preferences.rules import require_supported_radius
 
 
@@ -25,7 +25,7 @@ class PlaceService:
         *,
         deadline: float | None = None,
         page: int = 1,
-    ) -> list[Place]:
+    ) -> PlaceSearchPage:
         require_supported_radius(radius_meters)
         normalized = list(dict.fromkeys(word.strip() for word in keywords or [] if word.strip()))
         if len(normalized) > 5:
@@ -43,15 +43,16 @@ class PlaceService:
                 )
                 unique: dict[str, Place] = {}
                 for batch in batches:
-                    for place in batch:
+                    for place in batch.places:
                         unique.setdefault(place.id, place)
                 selected = sorted(
                     unique.values(), key=lambda p: (p.straight_line_distance_meters, p.id)
                 )[:limit]
-                result = selected
                 if asyncio.get_running_loop().time() >= until:
                     raise TimeoutError
-                return result
+                return PlaceSearchPage(
+                    places=selected, has_more=any(batch.has_more for batch in batches)
+                )
         except TimeoutError:
             raise AppError("AMAP_UNAVAILABLE", "地图服务暂时不可用", 502, True) from None
 

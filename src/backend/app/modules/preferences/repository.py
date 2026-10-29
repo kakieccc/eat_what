@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -46,9 +46,6 @@ async def record_meal(
     assert run is not None
     discovery = await session.get(DiscoverySession, run.discovery_session_id)
     assert discovery is not None
-    # Flows opened before the migration have no trustworthy prefill provenance.
-    if discovery.prefill_snapshot is None:
-        return
     if await session.scalar(select(PreferenceSample.id).where(
         PreferenceSample.discovery_session_id == discovery.id
     )):
@@ -96,13 +93,24 @@ class PreferencesRepository:
             result = preferences_from_row(row)
         return result
 
-    async def claim(self, lease_seconds: int) -> TaskClaim | None:
+    @staticmethod
+    def _pending() -> Select[tuple[Preference]]:
+        return select(Preference).where(
+            Preference.learning_status.in_(["queued", "running"]),
+            Preference.requested_count > Preference.attempted_count,
+            or_(Preference.lease_until.is_(None), Preference.lease_until < now()),
+        ).order_by(Preference.updated_at, Preference.id)
+
+    async def pending_ids(self) -> list[str]:
+        async with self.sessions() as session:
+            return list((await session.scalars(self._pending().with_only_columns(Preference.id))).all())
+
+    async def claim(self, lease_seconds: int, *, preference_id: str | None = None) -> TaskClaim | None:
+        statement = self._pending()
+        if preference_id is not None:
+            statement = statement.where(Preference.id == preference_id)
         async with self.sessions.begin() as session:
-            row = await session.scalar(select(Preference).where(
-                Preference.learning_status.in_(["queued", "running"]),
-                Preference.requested_count > Preference.attempted_count,
-                or_(Preference.lease_until.is_(None), Preference.lease_until < now()),
-            ).order_by(Preference.updated_at, Preference.id).with_for_update(skip_locked=True).limit(1))
+            row = await session.scalar(statement.with_for_update(skip_locked=True).limit(1))
             if row is None:
                 return None
             row.lease_token = uid()

@@ -8,7 +8,7 @@ import { ArrowLeft, ArrowUpRight, ClipboardList, MapPin } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { ApiError, request } from "../lib/api";
-import { isDiscardedRun } from "../lib/recommendations";
+import { isDiscardedRun, useMealBusy } from "../lib/recommendations";
 import { useDraft } from "../lib/store";
 import {
   fromDecisionRequest,
@@ -35,6 +35,7 @@ type HistoryData = {
 export function History() {
   const navigate = useNavigate(),
     draft = useDraft();
+  const busy = useMealBusy();
   const query = useInfiniteQuery({
     queryKey: ["history"],
     initialPageParam: null as string | null,
@@ -53,6 +54,7 @@ export function History() {
         <h1>每一餐，都有迹可循</h1>
         <p>记下选择，让下一次更轻松。</p>
       </header>
+      {busy && <p role="status">当前任务尚未完成或待确认，可以继续查看历史。</p>}
       {query.isPending ? (
         <p>正在读取历史…</p>
       ) : query.isError ? (
@@ -96,6 +98,7 @@ export function History() {
               </Link>
               <button
                 className="text-button"
+                disabled={busy}
                 onClick={() => {
                   draft.initialize({
                     ...fromDecisionRequest(item.request),
@@ -126,7 +129,9 @@ export function History() {
 }
 export function Detail() {
   const client = useQueryClient(),
-    draft = useDraft();
+    draft = useDraft(),
+    navigate = useNavigate();
+  const busy = useMealBusy();
   const { runId } = useParams();
   const query = useQuery({
     queryKey: ["run", runId],
@@ -207,8 +212,11 @@ export function Detail() {
               <ArrowUpRight size={18} />
             </a>
           )}
-          <Button variant="outline" asChild>
-            <Link to="/" onClick={() => draft.startNewMeal()}>开始新的选餐</Link>
+          <Button variant="outline" disabled={busy} onClick={() => {
+            draft.startNewMeal();
+            navigate("/");
+          }}>
+            开始新的选餐
           </Button>
           <p className="data-source">
             来源：高德地图 ·{" "}

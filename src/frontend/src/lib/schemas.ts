@@ -76,15 +76,13 @@ export const preferencesDraftSchema = z.object({
   partySize: z.number().or(z.nan()).nullable().transform((value) => value ?? Number.NaN),
   requestText: z.string(),
 });
-export const storedPreferencesSchema = z.object(preferencesSchema.shape).pick({
+const mealPreferencesSchema = z.object(preferencesSchema.shape).pick({
   budgetPerPerson: true,
   radiusMeters: true,
   allowedFoods: true,
   excludedFoods: true,
 });
-// Stored defaults and snapshots remain readable when input limits change.
-export const accountDefaultsSchema = storedPreferencesSchema.extend({
-  allowedFoods: foodNames.max(12),
+export const accountDefaultsSchema = mealPreferencesSchema.extend({
   requestText: z.string().max(1000),
 }).strict();
 export type AccountDefaults = z.infer<typeof accountDefaultsSchema>;
@@ -105,12 +103,8 @@ export const accountPreferencesSchema = z.object({
   }),
 });
 export type AccountPreferences = z.infer<typeof accountPreferencesSchema>;
-// Historical snapshots retain their original precision; new form submissions use money above.
-const snapshotMoney = z.string().regex(/^\d+(?:\.\d+)?$/)
-  .refine((value) => Number(value) <= 10000).nullable();
-const snapshotBudgetSchema = z.object({ min: snapshotMoney, max: snapshotMoney });
 export const prefillSnapshotSchema = z.object({
-  values: accountDefaultsSchema.extend({ budgetPerPerson: snapshotBudgetSchema }),
+  values: accountDefaultsSchema,
   source: z.enum(["defaults", "history"]),
   revision: z.number().int().nonnegative().nullable(),
 });
@@ -143,7 +137,7 @@ export function editedOverrides(
 }
 export const decisionRequestSchema = z.object({
   origin: originSchema,
-  preferences: storedPreferencesSchema.extend({ budgetPerPerson: snapshotBudgetSchema, allowedFoods: foodNames.max(12) }).strict(),
+  preferences: mealPreferencesSchema.strict(),
   mealPeriod: z.enum(["breakfast", "lunch", "dinner", "lateNight"]),
   partySize: z.number().int().min(1).max(20),
   requestText: z.string().max(1000),
@@ -155,7 +149,7 @@ export function toDecisionRequest(
 ): DecisionRequest {
   return {
     origin,
-    preferences: storedPreferencesSchema.parse(p),
+    preferences: mealPreferencesSchema.parse(p),
     mealPeriod: p.mealPeriod,
     partySize: p.partySize,
     requestText: p.requestText,
@@ -190,7 +184,7 @@ export const placeSchema = z.object({
   location: originSchema.omit({ address: true }),
   straightLineDistanceMeters: z.number().nonnegative(),
   rating: z.number().nullable(),
-  averageCost: z.union([z.number(), z.string()]).nullable(),
+  averageCost: z.string().nullable(),
   openingHoursText: z.string().nullable(),
   phone: z.string().nullable(),
   photos: z.array(z.string()),
@@ -239,7 +233,7 @@ export const eventSchema = z.discriminatedUnion("type", [
     type: z.literal("nodeCompleted"),
     node: z.string(),
     durationMs: z.number(),
-    outputCount: z.number().nullable().optional(),
+    outputCount: z.number().nullable(),
   }),
   z.object({ type: z.literal("result"), data: runSchema }),
   z.object({
@@ -247,7 +241,7 @@ export const eventSchema = z.discriminatedUnion("type", [
     error: z.object({
       code: z.string(),
       message: z.string(),
-      retryable: z.boolean().optional(),
+      retryable: z.boolean(),
     }),
   }),
   z.object({ type: z.literal("heartbeat"), timestamp: z.string() }),
@@ -261,7 +255,7 @@ export const backgroundJobSchema = z.object({
   path: z.string().regex(/^\/(?:decision-runs(?:\/[^/]+\/(?:refinements|retry))?|place-choices)$/),
   body: z.record(z.string(), z.unknown()),
   runId: z.string().nullable(),
-  status: z.enum(["submitting", "failed", "saved"]),
+  status: z.enum(["submitting", "failed", "rejected", "saved"]),
   error: z.string().nullable(),
 });
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;

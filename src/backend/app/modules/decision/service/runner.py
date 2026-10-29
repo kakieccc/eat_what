@@ -8,20 +8,15 @@ from typing import cast
 
 from app.core.errors import AppError
 from app.modules.decision.ports import DecisionRepository, FoodDecisionLlm
-from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.events import (
-    DecisionEvent,
     NodeCompleted,
-    RunFailed,
+    ProgressEvent,
     RunStarted,
-    WorkflowError,
 )
 from app.modules.decision.workflow.graph import build_graph
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.service import PlaceService
-from app.modules.preferences.rules import require_allowed_food_limit
-from app.modules.task.errors import LostTaskLease
 from app.modules.task.ports import TaskStore
 from app.modules.task.types import TaskClaim
 
@@ -35,51 +30,19 @@ class DecisionRunner:
         tasks: TaskStore,
         places: PlaceService,
         llm: FoodDecisionLlm,
-        lease_seconds: int,
         timeout_seconds: float,
     ) -> None:
         self.repository = repository
         self.tasks = tasks
-        self.lease_seconds = lease_seconds
         self.timeout_seconds = timeout_seconds
-        self.graph = build_graph(places, llm, self.emit, self.step_started, self.save_state)
+        self.graph = build_graph(places, llm, self.emit, self.step_started, self.step_completed)
 
     async def execute_claim(self, claim: TaskClaim) -> None:
-        graph_job = asyncio.create_task(self._execute_task(claim))
-        pulse = asyncio.create_task(self._heartbeat(claim))
-        try:
-            done, _ = await asyncio.wait({graph_job, pulse}, return_when=asyncio.FIRST_COMPLETED)
-            if pulse in done:
-                await pulse
-            await graph_job
-        except LostTaskLease:
-            graph_job.cancel()
-            await asyncio.gather(graph_job, return_exceptions=True)
-            log.info("Task lease lost: %s", claim.task_id)
-        except asyncio.CancelledError:
-            graph_job.cancel()
-            await asyncio.gather(graph_job, return_exceptions=True)
-            raise
-        except Exception as error:
-            await self._fail_task(claim, error)
-        finally:
-            graph_job.cancel()
-            pulse.cancel()
-            await asyncio.gather(graph_job, pulse, return_exceptions=True)
-
-    async def _heartbeat(self, claim: TaskClaim) -> None:
-        while True:
-            await asyncio.sleep(max(1, min(10, self.lease_seconds / 3)))
-            await self.tasks.renew(claim, self.lease_seconds)
-
-    async def _execute_task(self, claim: TaskClaim) -> None:
         task_id, run_id, request_id, state, elapsed_ms = await self.repository.prepare(claim)
         if state.get("already_completed"):
             return
         if state.get("schema_version") != SCHEMA_VERSION:
             raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
-        request = DecisionRequest.model_validate(state["request"])
-        require_allowed_food_limit(request.preferences.allowed_foods)
         remaining = self.timeout_seconds - elapsed_ms / 1000
         if remaining <= 0:
             raise TimeoutError
@@ -88,7 +51,7 @@ class DecisionRunner:
         token = execution_deadline.set(deadline)
         try:
             async with asyncio.timeout_at(deadline):
-                await self.emit(task_id, RunStarted(request_id=request_id, decision_run_id=run_id))
+                await self.emit(claim, RunStarted(request_id=request_id, decision_run_id=run_id))
                 result = cast(State, await self.graph.ainvoke(state))
         finally:
             execution_deadline.reset(token)
@@ -97,25 +60,24 @@ class DecisionRunner:
 
     async def step_started(self, state: State, name: str) -> None:
         await self.tasks.start_step(
-            TaskClaim(task_id=str(state["task_id"]), lease_token=str(state["lease_token"])),
+            TaskClaim(task_id=state["task_id"], lease_token=state["lease_token"]),
             name,
         )
 
-    async def save_state(self, state: State, phase: str) -> None:
-        await self.tasks.save_state(
-            TaskClaim(task_id=str(state["task_id"]), lease_token=str(state["lease_token"])),
-            dict(state),
-            phase,
+    async def step_completed(self, state: State, name: str) -> None:
+        await self.tasks.complete_step(
+            TaskClaim(task_id=state["task_id"], lease_token=state["lease_token"]),
+            name,
         )
 
-    async def emit(self, task_id: str, event: DecisionEvent) -> None:
-        await self.tasks.append_event(task_id, event)
+    async def emit(self, claim: TaskClaim, event: ProgressEvent) -> None:
+        await self.tasks.append_event(claim, event)
         if isinstance(event, NodeCompleted):
             log.info(
                 json.dumps(
                     {
                         "event": "nodeCompleted",
-                        "taskId": task_id,
+                        "taskId": claim.task_id,
                         "graphNode": event.node,
                         "durationMs": event.duration_ms,
                         "placeCount": event.output_count,
@@ -123,7 +85,7 @@ class DecisionRunner:
                 )
             )
 
-    async def _fail_task(self, claim: TaskClaim, error: Exception) -> None:
+    async def fail(self, claim: TaskClaim, error: Exception) -> None:
         is_timeout = isinstance(error, TimeoutError)
         failure = (
             error
@@ -135,16 +97,5 @@ class DecisionRunner:
                 is_timeout,
             )
         )
-        updated = await self.repository.fail(claim, failure.code, failure.message)
-        if updated:
-            await self.emit(
-                claim.task_id,
-                RunFailed(
-                    error=WorkflowError(
-                        code=failure.code,
-                        message=failure.message,
-                        retryable=failure.retryable,
-                    )
-                ),
-            )
+        await self.repository.fail(claim, failure.code, failure.message, failure.retryable)
         log.error("Task %s failed with %s", claim.task_id, failure.code, exc_info=error)

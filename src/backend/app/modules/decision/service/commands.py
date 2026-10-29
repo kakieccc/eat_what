@@ -7,13 +7,16 @@ from app.modules.decision.rules.refinement import apply_refinement
 from app.modules.decision.schemas import DecisionCreateRequest, DecisionRequest, RefinementRequest
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
 from app.modules.places.schemas import Place
-from app.modules.preferences.rules import require_allowed_food_limit
 from app.modules.preferences.schemas import PrefillSnapshot
 
 
 class DecisionCommandService:
-    def __init__(self, repository: DecisionRepository) -> None:
+    def __init__(
+        self, repository: DecisionRepository, max_active: int = 4, submissions_per_minute: int = 3,
+    ) -> None:
         self.repository = repository
+        self.max_active = max_active
+        self.submissions_per_minute = submissions_per_minute
 
     async def create(
         self, user_id: str, request: DecisionCreateRequest, idempotency_key: str, request_id: str
@@ -58,7 +61,7 @@ class DecisionCommandService:
             else {"request": request.model_dump(mode="json"),
                   "prefill": prefill.model_dump(mode="json") if prefill else None} if request else {}
         )
-        async with self.repository.transaction(user_id, endpoint + key) as tx:
+        async with self.repository.transaction(user_id) as tx:
             existing = await tx.idempotency(endpoint, key)
             if existing:
                 if existing.request_hash != digest:
@@ -76,13 +79,13 @@ class DecisionCommandService:
                 request = apply_refinement(request, refinement, [p.id for p in parent_run.places])
             original = parent_run.original_request
         assert request is not None and original is not None
-        require_allowed_food_limit(request.preferences.allowed_foods)
-        async with self.repository.transaction(user_id, endpoint + key) as tx:
+        async with self.repository.transaction(user_id) as tx:
             existing = await tx.idempotency(endpoint, key)
             if existing:
                 if existing.request_hash != digest:
                     raise AppError("IDEMPOTENCY_CONFLICT", "请求冲突", 409)
                 return str(existing.response_body["runId"])
+            await tx.require_task_capacity(self.max_active, self.submissions_per_minute)
             excluded: list[str] = []
             search_excluded: list[str] = []
             old_cuisines: list[str] = []
@@ -107,9 +110,9 @@ class DecisionCommandService:
                 session_id = await tx.create_discovery(original, prefill)
             action: str = refinement.action if refinement else ""
             if retry:
-                search_excluded = list(parent.retry_state.get("excluded", []))
-                old_cuisines = list(parent.retry_state.get("old_cuisines", []))
-                action = str(parent.retry_state.get("action", ""))
+                search_excluded = list(parent.retry_state["excluded"])
+                old_cuisines = list(parent.retry_state["old_cuisines"])
+                action = parent.retry_state["action"]
             run_id = await tx.create_run(session_id, request, parent_id, excluded, action, original)
             state: State = {
                 "schema_version": SCHEMA_VERSION,
@@ -119,12 +122,9 @@ class DecisionCommandService:
                 "action": action,
                 "places": [],
                 "filter_summary": {},
-                "next_node": "search_places",
                 "old_cuisines": old_cuisines,
                 "recent": await tx.recent_place_keys(),
             }
-            task_id = await tx.enqueue(
-                run_id, "refinement" if parent_id else "decision", request_id, state
-            )
+            task_id = await tx.enqueue(run_id, request_id, state)
             await tx.record_idempotency(endpoint, key, digest, run_id, task_id)
             return run_id
