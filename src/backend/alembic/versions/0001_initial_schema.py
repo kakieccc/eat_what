@@ -31,6 +31,9 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("key_hash"),
     )
+    op.create_index(
+        "ix_auth_rate_limits_window_started_at", "auth_rate_limits", ["window_started_at"]
+    )
     op.create_table(
         "place_cache",
         sa.Column("cache_key", sa.String(length=128), nullable=False),
@@ -72,13 +75,14 @@ def upgrade() -> None:
         sa.UniqueConstraint("token_hash"),
     )
     op.create_index(op.f("ix_auth_sessions_user_id"), "auth_sessions", ["user_id"], unique=False)
+    op.create_index("ix_auth_sessions_expires_at", "auth_sessions", ["expires_at"])
     op.create_table(
         "discovery_sessions",
         sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("current_run_id", sa.Uuid(as_uuid=False), nullable=True),
         sa.Column("seen_place_keys", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("request_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
-        sa.Column("prefill_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("prefill_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -113,6 +117,7 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_idempotency_records_user_id"), "idempotency_records", ["user_id"], unique=False
     )
+    op.create_index("ix_idempotency_records_expires_at", "idempotency_records", ["expires_at"])
     op.create_table(
         "preferences",
         sa.Column("user_id", sa.Uuid(as_uuid=False), nullable=False),
@@ -206,7 +211,6 @@ def upgrade() -> None:
         "tasks",
         sa.Column("decision_run_id", sa.Uuid(as_uuid=False), nullable=False),
         sa.Column("parent_task_id", sa.Uuid(as_uuid=False), nullable=True),
-        sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("phase", sa.String(length=64), nullable=False),
         sa.Column("request_id", sa.String(length=36), nullable=False),
@@ -356,13 +360,16 @@ def downgrade() -> None:
     op.drop_table("decision_runs")
     op.drop_index("preference_learning_queue", table_name="preferences")
     op.drop_table("preferences")
+    op.drop_index("ix_idempotency_records_expires_at", table_name="idempotency_records")
     op.drop_index(op.f("ix_idempotency_records_user_id"), table_name="idempotency_records")
     op.drop_table("idempotency_records")
     op.drop_index(op.f("ix_discovery_sessions_user_id"), table_name="discovery_sessions")
     op.drop_table("discovery_sessions")
+    op.drop_index("ix_auth_sessions_expires_at", table_name="auth_sessions")
     op.drop_index(op.f("ix_auth_sessions_user_id"), table_name="auth_sessions")
     op.drop_table("auth_sessions")
     op.drop_table("users")
     op.drop_index(op.f("ix_place_cache_expires_at"), table_name="place_cache")
     op.drop_table("place_cache")
+    op.drop_index("ix_auth_rate_limits_window_started_at", table_name="auth_rate_limits")
     op.drop_table("auth_rate_limits")

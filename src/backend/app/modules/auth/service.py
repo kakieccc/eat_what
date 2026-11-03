@@ -69,6 +69,7 @@ class AuthService:
         await self.repository.consume_limit(digest(f"login-ip:{ip}"), 30, 900)
         await self.repository.consume_limit(digest(f"login-user:{username}"), 10, 900)
         user = await self.repository.by_username(username)
+        # Unknown usernames still pay the password-verification cost to reduce timing disclosure.
         encoded = user.password if user else self.passwords.dummy_hash
         verified = await self.passwords.verify(password, encoded)
         if user is None or not verified:

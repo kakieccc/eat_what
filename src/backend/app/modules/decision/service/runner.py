@@ -15,7 +15,7 @@ from app.modules.decision.workflow.events import (
     RunStarted,
 )
 from app.modules.decision.workflow.graph import build_graph
-from app.modules.decision.workflow.state import SCHEMA_VERSION, State
+from app.modules.decision.workflow.state import State
 from app.modules.places.service import PlaceService
 from app.modules.task.ports import TaskStore
 from app.modules.task.types import TaskClaim
@@ -41,8 +41,6 @@ class DecisionRunner:
         task_id, run_id, request_id, state, elapsed_ms = await self.repository.prepare(claim)
         if state.get("already_completed"):
             return
-        if state.get("schema_version") != SCHEMA_VERSION:
-            raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
         remaining = self.timeout_seconds - elapsed_ms / 1000
         if remaining <= 0:
             raise TimeoutError

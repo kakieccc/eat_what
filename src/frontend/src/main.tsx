@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import {
   BrowserRouter,
   Navigate,
+  Link,
   NavLink,
   Outlet,
   Route,
@@ -12,9 +13,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   House,
-  History as HistoryIcon,
-  UserRound,
-  Utensils,
+  Clock as HistoryIcon,
+  Heart,
 } from "lucide-react";
 import { Home, Profile } from "./pages/home";
 import { AuthPage } from "./pages/auth";
@@ -51,17 +51,14 @@ function RequireAuth() {
 function App() {
   const { pathname } = useLocation();
   const auth = useAuth();
+  const anonymous = pathname === "/login" || pathname === "/register";
+  const homeSection = ["/", "/map", "/discover"].includes(pathname) || pathname.startsWith("/decision-runs/");
   useEffect(() => watchRecommendations(client), []);
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
   return (
-    <div className="app-shell">
-      <div className="brand">
-        <Utensils size={19} />
-        <span>今天吃什么</span>
-        <span className="brand-note">好好吃饭，慢慢选择。</span>
-      </div>
+    <div className={`app-shell${anonymous ? " auth-shell" : ""}`}>
       {configError && (
         <aside role="alert" className="configuration-notice">
           {configError}
@@ -100,16 +97,16 @@ function App() {
         )}
       </main>
       {auth.state === "authenticated" && !configError && <nav className="bottom-nav" aria-label="主导航">
-        <NavLink to="/" end>
+        <Link to="/" className={homeSection ? "active" : undefined} aria-current={homeSection ? "page" : undefined}>
           <House size={21} />
           <span>首页</span>
-        </NavLink>
+        </Link>
         <NavLink to="/history">
           <HistoryIcon size={21} />
           <span>历史</span>
         </NavLink>
         <NavLink to="/profile">
-          <UserRound size={21} />
+          <Heart size={21} />
           <span>偏好</span>
         </NavLink>
       </nav>}

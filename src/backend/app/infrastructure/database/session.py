@@ -18,6 +18,8 @@ def create_sessions(settings: Settings) -> async_sessionmaker[AsyncSession]:
         pool_size=5,
         max_overflow=5,
         pool_pre_ping=True,
+        # Background exception tracebacks must not include SQL bound values.
+        hide_parameters=True,
     )
     return async_sessionmaker(engine, expire_on_commit=False)
 

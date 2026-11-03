@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ) as llm_client,
     ):
         try:
+            # Requests in this API process share concurrency limits and in-flight map requests.
             app.state.container = build_container(settings, sessions, client, llm_client)
             app.state.ready = True
             job = asyncio.create_task(app.state.container.worker.run())

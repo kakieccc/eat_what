@@ -44,6 +44,7 @@ def preferences_from_row(row: Preference | None) -> PreferencesResponse:
         "defaults": values, "sources": {to_camel(key): value for key, value in sources.items()},
         "overrides": overrides, "revision": row.revision if row else 0,
         "learning": LearningStatus(
+            enabled=row.learning_enabled if row else False,
             meal_count=count, status=row.learning_status if row else "idle",
             last_success_at=row.last_success_at if row else None,
             next_learning_at=10 if count < 10 else (count // 5 + 1) * 5,

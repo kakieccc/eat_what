@@ -5,9 +5,7 @@ from app.core.concurrency import gather_cancel_on_error
 from app.core.errors import AppError
 from app.modules.decision.ports import FoodDecisionLlm
 from app.modules.decision.rules.policies import eligible, score_places
-from app.modules.decision.schemas import DecisionRequest
 from app.modules.decision.workflow.context import execution_deadline
-from app.modules.decision.workflow.nodes.common import places, serialized
 from app.modules.decision.workflow.nodes.search_places import CANDIDATE_LIMIT
 from app.modules.decision.workflow.nodes.search_places import build as build_search
 from app.modules.decision.workflow.state import State
@@ -34,6 +32,7 @@ def merge_detail(place: Place, detail: Place) -> Place:
         "photos",
     )
     updates = {}
+    # Detail responses are partial; track freshness per field to preserve newer populated values.
     timestamps = {key: place.data_updated_at for key in fields} | place.field_updated_at
     for key in fields:
         value = getattr(detail, key)
@@ -53,7 +52,7 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
     search_more = build_search(service)
 
     async def filtering(state: State) -> State:
-        request = DecisionRequest.model_validate(state["request"])
+        request = state["request"]
 
         def ranked(candidates: list[Place]) -> list[Place]:
             return score_places(
@@ -75,18 +74,18 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
                 return None
 
         current = state.copy()
-        pending = ranked(places(state))
+        pending = ranked(state["places"])
         checked: set[str] = set()
         kept: list[Place] = []
         summary = dict(state["filter_summary"])
         while len(kept) < CANDIDATE_LIMIT:
             if not pending:
                 more = await search_more({
-                    **current, "places": serialized(kept), "filter_summary": summary,
+                    **current, "places": kept, "filter_summary": summary,
                 })
                 current.update(more)
                 summary = more["filter_summary"]
-                pending = ranked([p for p in places(more) if p.id not in checked])
+                pending = ranked([p for p in more["places"] if p.id not in checked])
                 if not pending:
                     break
             batch_size = CANDIDATE_LIMIT - len(kept)
@@ -103,6 +102,6 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
             summary["detailFailures"] = summary.get("detailFailures", 0) + sum(p is None for p in details)
             for key, count in counts.items():
                 summary[key] = summary.get(key, 0) + count
-        return {**current, "places": serialized(ranked(kept)), "filter_summary": summary}
+        return {**current, "places": ranked(kept), "filter_summary": summary}
 
     return filtering

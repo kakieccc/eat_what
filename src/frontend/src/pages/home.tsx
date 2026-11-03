@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { MapPin, ChevronRight } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PreferencesForm } from "../components/preferences-form";
 import { Button } from "../components/ui/button";
+import { Brand, PageHero } from "../components/brand";
 import { useDraft } from "../lib/store";
 import { useMealBusy } from "../lib/recommendations";
 import { useAuth } from "../lib/auth";
@@ -65,15 +66,14 @@ export function Home() {
   };
   return (
     <>
-      <header className="page-heading">
-        <h1>今天，吃点什么？</h1>
-        <p>从附近出发，找到合心意的一餐。</p>
+      <header className="home-header">
+        <Brand />
+        <Link to="/map" className="location-link">
+          <MapPin size={20} />
+          <span>{draft.origin?.address || "选择出发地点"}</span>
+          <ChevronRight size={18} />
+        </Link>
       </header>
-      <Link to="/map" className="location-link">
-        <MapPin size={20} />
-        <span>{draft.origin?.address || "先选一个出发地点"}</span>
-        <ChevronRight size={18} />
-      </Link>
       {saved.isError && (
         <p role="alert" className="error">
           500 Error：账户偏好读取失败，请检查本次条件。
@@ -90,7 +90,6 @@ export function Home() {
           label="帮我选一家"
         />
       )}
-      <p className="footnote">真实地点 · 按范围寻找 · 三个合心意的选择</p>
     </>
   );
 }
@@ -98,45 +97,51 @@ export function Home() {
 function PreferenceEditor({
   initial,
   onSaved,
+  busy,
+  onSavingChange,
+  children,
 }: {
   initial: AccountPreferences;
   onSaved: (value: AccountPreferences) => void;
+  busy: boolean;
+  onSavingChange: (saving: boolean) => void;
+  children: ReactNode;
 }) {
-  // Keep the editing baseline stable until an explicit save or reload.
+  // Keep the editing baseline stable until an explicit save.
   const [baseline] = useState(initial);
   const [automatic, setAutomatic] = useState<LearnableField[]>([]);
   const save = async (p: Preferences) => {
-    const saved = await request(
-      "/preferences",
-      {
-        revision: baseline.revision,
-        overrides: editedOverrides(baseline, p, automatic),
-      },
-      "PUT",
-      undefined,
-      undefined,
-      accountPreferencesSchema,
-    );
-    onSaved(saved);
+    onSavingChange(true);
+    try {
+      const saved = await request(
+        "/preferences",
+        { revision: baseline.revision, overrides: editedOverrides(baseline, p, automatic) },
+        "PUT",
+        undefined,
+        undefined,
+        accountPreferencesSchema,
+      );
+      onSaved(saved);
+    } finally {
+      onSavingChange(false);
+    }
   };
   return (
     <PreferencesForm
       initial={{ ...defaults, ...baseline.defaults }}
       onSubmit={save}
+      busy={busy}
       personal
       label="保存偏好"
       memory={{
         sources: baseline.sources,
         overrides: baseline.overrides,
         automatic,
-        onRestore: (key) =>
-          setAutomatic((current) =>
-            current.includes(key)
-              ? current.filter((field) => field !== key)
-              : [...current, key],
-          ),
+        onRestore: (key) => setAutomatic((current) =>
+          current.includes(key) ? current.filter((field) => field !== key) : [...current, key],
+        ),
       }}
-    />
+    >{children}</PreferencesForm>
   );
 }
 
@@ -152,6 +157,8 @@ export function Profile() {
   const client = useQueryClient();
   const [notice, setNotice] = useState("");
   const [editorVersion, setEditorVersion] = useState(0);
+  const [updating, setUpdating] = useState(false);
+  const [learningError, setLearningError] = useState("");
   const [logoutBusy, setLogoutBusy] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const logout = async () => {
@@ -168,27 +175,54 @@ export function Profile() {
   };
   const saved = (value: AccountPreferences) => {
     client.setQueryData(["preferences"], value);
-    setEditorVersion((v) => v + 1);
+    setEditorVersion((version) => version + 1);
     setNotice("偏好已保存，下次开始新的选餐时生效。");
   };
-  const reload = async () => {
-    const result = await query.refetch();
-    if (result.isSuccess) {
-      setEditorVersion((v) => v + 1);
-      setNotice("已读取最新偏好。");
+  const updateLearning = async (enabled: boolean) => {
+    setUpdating(true);
+    setLearningError("");
+    try {
+      const value = await request(
+        "/preferences/learning", { enabled }, "PATCH", undefined, undefined, accountPreferencesSchema,
+      );
+      // Do not remount the editor: switching learning must preserve unsaved edits.
+      client.setQueryData(["preferences"], value);
+      setNotice(enabled ? "偏好学习已开启" : "偏好学习已关闭");
+    } catch (error) {
+      setLearningError(error instanceof Error ? error.message : "偏好学习设置保存失败");
+    } finally {
+      setUpdating(false);
     }
   };
   const learning = query.data?.learning;
+  const accountPanel = (
+    <section className="account-panel" aria-label="当前账号">
+      <div><strong>{auth.user?.displayName}</strong><p>@{auth.user?.username}</p></div>
+      <Button type="button" variant="ghost" disabled={logoutBusy} onClick={() => void logout()}>
+        {logoutBusy ? "正在退出…" : "退出登录"}<ChevronRight size={18} />
+      </Button>
+    </section>
+  );
   return (
     <>
-      <header className="page-heading">
+      <Brand />
+      <PageHero className="profile-hero">
         <h1>你的用餐偏好</h1>
-        <p>从多餐选择中总结，作为下一餐的默认条件。</p>
-      </header>
       {learning && (
+        <section className="learning-control" aria-label="偏好学习">
+          <div><strong>偏好学习</strong><p>每天总结已完成的选餐</p></div>
+          <Button type="button" role="switch" aria-label="偏好学习" aria-checked={learning.enabled}
+            className="learning-switch"
+            variant={learning.enabled ? "default" : "outline"} disabled={updating}
+            onClick={() => void updateLearning(!learning.enabled)}>
+            <span className="switch-thumb" /><span className="sr-only">{learning.enabled ? "关闭偏好学习" : "开启偏好学习"}</span>
+          </Button>
+        </section>
+      )}
+      </PageHero>
+      {learningError && <p className="error" role="alert">{learningError}</p>}
+      {learning && (learning.status !== "idle" || learning.lastSuccessAt) && (
         <p className="muted" role="status">
-          已记录 {learning.mealCount} 餐，满 {learning.nextLearningAt}{" "}
-          餐后进入每日总结。
           {learning.status === "queued" ? " 等待每日偏好总结。" : ""}
           {learning.status === "running" ? " 正在总结偏好。" : ""}
           {learning.status === "failed"
@@ -199,49 +233,22 @@ export function Profile() {
             : ""}
         </p>
       )}
-      <p className="muted">
-        自动偏好每天定期总结，只学习预算、距离和补充说明；限定与排除食物由你设置。手动修改保存后立即更新账户偏好，本餐草稿保持原样。
-      </p>
-      {query.isError && query.data && (
-        <p className="error" role="alert">
-          {query.error.message}
-        </p>
+      {query.isError && (
+        <div className="error" role="alert">
+          <p>{query.error.message}</p>
+          <Button type="button" variant="ghost" disabled={query.isFetching} onClick={() => void query.refetch()}>
+            重新读取偏好
+          </Button>
+        </div>
       )}
       {query.isPending ? (
         <p>正在读取偏好…</p>
       ) : query.data ? (
-        <PreferenceEditor
-          key={editorVersion}
-          initial={query.data}
-          onSaved={saved}
-        />
-      ) : query.isError ? (
-        <div role="alert" className="error">
-          {query.error.message}
-          <button onClick={() => void reload()}>重新读取偏好</button>
-        </div>
+        <PreferenceEditor key={editorVersion} initial={query.data} onSaved={saved}
+          busy={updating} onSavingChange={setUpdating} >{accountPanel}</PreferenceEditor>
       ) : null}
-      <Button
-        variant="ghost"
-        disabled={query.isFetching}
-        onClick={() => void reload()}
-      >
-        重新读取偏好
-      </Button>
+      {!query.data && accountPanel}
       <p role="status">{notice}</p>
-      <section className="account-panel" aria-label="当前账号">
-        <div>
-          <strong>{auth.user?.displayName}</strong>
-          <p>@{auth.user?.username}</p>
-        </div>
-        <Button
-          variant="outline"
-          disabled={logoutBusy}
-          onClick={() => void logout()}
-        >
-          {logoutBusy ? "正在退出…" : "退出登录"}
-        </Button>
-      </section>
       {logoutError && (
         <p role="alert" className="error">
           {logoutError}

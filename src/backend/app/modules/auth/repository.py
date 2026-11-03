@@ -24,6 +24,7 @@ class SqlAuthRepository:
     async def consume_limit(self, key_hash: str, limit: int, seconds: int) -> None:
         current = now()
         async with self.sessions.begin() as session:
+            # A row lock cannot serialize the first attempts while the rate-limit row is absent.
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id(key_hash)}
             )
@@ -70,6 +71,7 @@ class SqlAuthRepository:
     ) -> None:
         async with self.sessions.begin() as session:
             user = await session.get(User, user_id, with_for_update=True)
+            # Password verification ran outside this lock; rotation must invalidate that login.
             if user is None or user.password != expected_password_hash:
                 raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
             session.add(AuthSession(

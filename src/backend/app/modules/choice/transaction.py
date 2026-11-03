@@ -45,6 +45,7 @@ class ChoiceTransaction:
         run = await self.session.get(DecisionRun, candidate.decision_run_id)
         if run is None:
             raise AppError("NOT_FOUND", "决策不存在", 404)
+        # Share this lock with refinement so choosing and replacing candidates cannot both win.
         discovery = await self.session.scalar(
             select(DiscoverySession)
             .where(
@@ -76,6 +77,7 @@ class ChoiceTransaction:
         )
         self.session.add(choice)
         await self.session.flush()
+        # The saved choice and its learning evidence must commit or roll back together.
         await record_meal(self.session, self.user_id, choice.id, candidate.id)
         return choice.id
 

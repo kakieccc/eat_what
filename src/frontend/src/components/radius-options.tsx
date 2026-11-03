@@ -1,6 +1,7 @@
 import { ToggleGroup } from "radix-ui";
 import { radiusValues, type SearchRadius } from "../lib/schemas";
 import { formatDistance } from "../lib/utils";
+import { BrandMark } from "./brand";
 
 export function RadiusOptions({
   value,
@@ -28,6 +29,7 @@ export function RadiusOptions({
     >
       {radiusValues.map((radius) => (
         <ToggleGroup.Item key={radius} value={String(radius)}>
+          {value === radius && <BrandMark />}
           {formatDistance(radius)}
         </ToggleGroup.Item>
       ))}

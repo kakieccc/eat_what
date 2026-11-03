@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 from math import ceil
-from typing import cast
 
 from sqlalchemy import String, delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,8 +17,9 @@ from app.modules.decision.models import (
     PlaceCandidate,
 )
 from app.modules.decision.ports import IdempotencySnapshot, ParentSnapshot
+from app.modules.decision.repository.mappers import place_from_candidate
 from app.modules.decision.schemas import DecisionRequest
-from app.modules.decision.workflow.state import SCHEMA_VERSION, State
+from app.modules.decision.workflow.state import SCHEMA_VERSION, STATE_ADAPTER, State
 from app.modules.preferences.schemas import PrefillSnapshot
 from app.modules.task.models import Task, TaskEvent, TaskStatus
 
@@ -137,9 +137,16 @@ class DecisionTransaction:
         return ParentSnapshot(
             status=run.status,
             session_id=run.discovery_session_id,
+            request=DecisionRequest.model_validate(run.effective_preferences),
+            original_request=DecisionRequest.model_validate(run.original_request),
+            has_choice=await self.session.scalar(
+                select(PlaceChoice.id).where(
+                    PlaceChoice.discovery_session_id == run.discovery_session_id,
+                )
+            ) is not None,
             excluded_place_keys=list(run.excluded_place_keys),
-            place_snapshots=[dict(candidate.place_snapshot) for candidate in candidates],
-            retry_state=cast(State, (await self.session.execute(
+            places=[place_from_candidate(candidate) for candidate in candidates],
+            retry_state=STATE_ADAPTER.validate_python((await self.session.execute(
                 select(Task.state).where(Task.decision_run_id == run.id)
                 .order_by(Task.created_at.desc(), Task.id.desc()).limit(1)
             )).scalar_one()),
@@ -210,12 +217,12 @@ class DecisionTransaction:
             status=TaskStatus.queued.value,
             phase="queued",
             request_id=request_id,
-            state=dict(state),
+            state=STATE_ADAPTER.dump_python(state, mode="json"),
         )
         self.session.add(task)
         await self.session.flush()
         state["task_id"] = task.id
-        task.state = dict(state)
+        task.state = STATE_ADAPTER.dump_python(state, mode="json")
         return task.id
 
     async def seen_place_keys(self, session_id: str) -> list[str]:

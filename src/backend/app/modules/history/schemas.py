@@ -6,6 +6,8 @@ from app.core.models import Model
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.places.schemas import Place
 
+HistoryCursor = tuple[datetime, str]
+
 
 class HistoryChoice(Model):
     id: str

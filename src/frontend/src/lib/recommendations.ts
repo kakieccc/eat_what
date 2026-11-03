@@ -24,6 +24,7 @@ export function useMealBusy() {
 }
 
 function discard(client: QueryClient, id: string) {
+  // Removing cached data alone cannot prevent a late in-flight response from repopulating it.
   const ids = discarded.get(client) ?? new Set<string>();
   ids.add(id);
   discarded.set(client, ids);
@@ -49,6 +50,7 @@ export function acceptRecommendation(client: QueryClient, run: Run, previousId?:
 export async function readRecommendation(client: QueryClient, runId: string, signal?: AbortSignal): Promise<Run> {
   const fresh = await request("/decision-runs/" + runId, undefined, "GET", undefined, signal, runSchema);
   const cached = client.getQueryData<Run>(["run", runId]);
+  // Overlapping reads may finish out of order; confirmed choices and terminal states cannot regress.
   if (cached?.choice && !fresh.choice) return cached;
   if (cached && ["completed", "failed"].includes(cached.status) && ["pending", "running"].includes(fresh.status)) return cached;
   return fresh;
@@ -56,9 +58,12 @@ export async function readRecommendation(client: QueryClient, runId: string, sig
 
 export async function refreshCurrentRecommendation(client: QueryClient, sessionId: string) {
   const previousId = useDraft.getState().runId;
-  const runs = await request<Run[]>(`/discovery-sessions/${sessionId}/decision-runs`);
+  const runs = await request(
+    `/discovery-sessions/${sessionId}/decision-runs`, undefined, "GET", undefined, undefined, runSchema.array(),
+  );
+  // A user may have started another run while this lookup was in flight.
   if (!runs[0] || useDraft.getState().runId !== previousId) return;
-  const current = runSchema.parse(runs[0]);
+  const current = runs[0];
   acceptRecommendation(client, current);
   useDraft.getState().setRunId(current.decisionRunId);
 }

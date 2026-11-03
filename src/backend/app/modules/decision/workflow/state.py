@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import TypedDict
+
+from pydantic import TypeAdapter
+
+from app.modules.decision.schemas import DecisionRequest
+from app.modules.places.schemas import Place
 
 SCHEMA_VERSION = 12
 PROMPT_VERSION = "10"
@@ -11,8 +16,8 @@ class DecisionState(TypedDict, total=False):
     task_id: str
     lease_token: str
     decision_run_id: str
-    request: dict[str, Any]
-    places: list[dict[str, Any]]
+    request: DecisionRequest
+    places: list[Place]
     excluded: list[str]
     recent: list[str]
     old_cuisines: list[str]
@@ -25,3 +30,4 @@ class DecisionState(TypedDict, total=False):
 
 
 State = DecisionState
+STATE_ADAPTER = TypeAdapter(State)

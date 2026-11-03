@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { navigationHref } from "./utils";
 export type Point = { latitude: number; longitude: number };
 export const cuisines = [
   "中餐",
@@ -14,10 +15,14 @@ export const cuisines = [
   "小吃",
   "其他餐饮",
 ];
+export const excludedCuisineOptions = [
+  "川菜", "湘菜", "粤菜", "江浙菜", "鲁菜", "徽菜", "闽菜", "东北菜",
+  "西北菜", "日韩料理", "东南亚料理", "西餐",
+];
 export const originSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  address: z.string(),
+  address: z.string().max(200),
 });
 export type Origin = z.infer<typeof originSchema>;
 export const radiusValues = [500, 1000, 2000, 5000] as const;
@@ -36,25 +41,26 @@ const money = z
   .nullable();
 export const allowedFoodLimit = 5;
 const foodNames = z.array(z.string().trim().min(1).max(30));
+export const budgetSchema = z
+  .object({ min: money, max: money })
+  .refine(
+    (b) =>
+      b.min === null ||
+      b.max === null ||
+      b.min === "" ||
+      b.max === "" ||
+      Number(b.min) <= Number(b.max),
+    "预算下限不能高于上限",
+  );
 export const preferencesSchema = z
   .object({
-    budgetPerPerson: z
-      .object({ min: money, max: money })
-      .refine(
-        (b) =>
-          b.min === null ||
-          b.max === null ||
-          b.min === "" ||
-          b.max === "" ||
-          Number(b.min) <= Number(b.max),
-        "预算下限不能高于上限",
-      ),
+    budgetPerPerson: budgetSchema,
     radiusMeters: z.custom<SearchRadius>(
       isSearchRadius,
       "请选择 500 米、1 km、2 km 或 5 km 的搜索半径",
     ),
     allowedFoods: foodNames.max(allowedFoodLimit, `限定食物类型最多 ${allowedFoodLimit} 项`),
-    excludedFoods: foodNames.max(12),
+    excludedFoods: foodNames.max(12, "最多排除 12 种菜系"),
     mealPeriod: z.enum(["breakfast", "lunch", "dinner", "lateNight"]),
     partySize: z.number().int().min(1).max(20),
     requestText: z.string().max(1000),
@@ -96,6 +102,7 @@ export const accountPreferencesSchema = z.object({
   overrides: preferenceOverridesSchema,
   revision: z.number().int().nonnegative(),
   learning: z.object({
+    enabled: z.boolean(),
     mealCount: z.number().int().nonnegative(),
     status: z.enum(["idle", "queued", "running", "failed"]),
     lastSuccessAt: z.string().nullable(),
@@ -127,6 +134,7 @@ export function editedOverrides(
 ): PreferenceOverrides {
   const values = accountDefaults(p);
   const overrides: PreferenceOverrides = { ...baseline.overrides };
+  // Saving unrelated fields must not turn unchanged learned defaults into manual overrides.
   for (const key of Object.keys(values) as (keyof AccountDefaults)[]) {
     if (!sameDefault(values[key], baseline.defaults[key])) {
       Object.assign(overrides, { [key]: values[key] });
@@ -147,12 +155,13 @@ export function toDecisionRequest(
   p: Preferences,
   origin: Origin,
 ): DecisionRequest {
+  const { mealPeriod, partySize, requestText, ...preferences } = p;
   return {
     origin,
-    preferences: mealPreferencesSchema.parse(p),
-    mealPeriod: p.mealPeriod,
-    partySize: p.partySize,
-    requestText: p.requestText,
+    preferences,
+    mealPeriod,
+    partySize,
+    requestText,
   };
 }
 export function fromDecisionRequest(r: DecisionRequest): Preferences {
@@ -193,7 +202,7 @@ export const placeSchema = z.object({
   scoreBreakdown: z.record(z.string(), z.number()),
   reason: z.string(),
   warnings: z.array(z.string()),
-  navigationUrl: z.string().nullable(),
+  navigationUrl: z.string().nullable().transform(navigationHref),
   candidateId: z.string().nullable(),
   rank: z.number().int(),
 });
@@ -218,6 +227,31 @@ export const runSchema = z.object({
   choice: choiceSchema.nullable(),
 });
 export type Run = z.infer<typeof runSchema>;
+export const historySchema = z.object({
+  items: z.array(z.object({
+    id: z.string(),
+    createdAt: z.string(),
+    request: decisionRequestSchema,
+    choice: z.object({
+      id: z.string(),
+      decisionRunId: z.string(),
+      place: placeSchema,
+    }),
+  })),
+  nextCursor: z.string().nullable(),
+});
+export const userSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  displayName: z.string(),
+  createdAt: z.string(),
+});
+export type User = z.infer<typeof userSchema>;
+export const authPayloadSchema = z.object({
+  user: userSchema,
+  csrfToken: z.string().min(1),
+});
+export type AuthPayload = z.infer<typeof authPayloadSchema>;
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("runStarted"),

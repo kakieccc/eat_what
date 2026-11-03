@@ -5,7 +5,6 @@ from app.core.errors import AppError
 from app.modules.location.schemas import Point
 from app.modules.places.ports import GeoPlaceProvider, PlaceRepository
 from app.modules.places.schemas import Place, PlaceSearchPage
-from app.modules.preferences.rules import require_supported_radius
 
 
 class PlaceService:
@@ -26,10 +25,6 @@ class PlaceService:
         deadline: float | None = None,
         page: int = 1,
     ) -> PlaceSearchPage:
-        require_supported_radius(radius_meters)
-        normalized = list(dict.fromkeys(word.strip() for word in keywords or [] if word.strip()))
-        if len(normalized) > 5:
-            raise AppError("INVALID_INPUT", "最多支持五个搜索关键词", 422)
         until = deadline_after(self.timeout_seconds, deadline)
         try:
             async with asyncio.timeout_at(until):
@@ -38,7 +33,7 @@ class PlaceService:
                         self.provider.search(
                             origin, radius_meters, limit, word, deadline=until, page=page
                         )
-                        for word in normalized or [""]
+                        for word in keywords or [""]
                     )
                 )
                 unique: dict[str, Place] = {}

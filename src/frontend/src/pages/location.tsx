@@ -6,7 +6,7 @@ import { Button } from "../components/ui/button";
 import { locate } from "../lib/amap";
 import { request } from "../lib/api";
 import { useDraft } from "../lib/store";
-import type { Origin } from "../lib/schemas";
+import { originSchema, type Origin } from "../lib/schemas";
 export function Location() {
   const navigate = useNavigate(),
     draft = useDraft(),
@@ -26,12 +26,13 @@ export function Location() {
     }
     const abort = new AbortController();
     const timer = setTimeout(() => {
-      request<Origin[]>(
+      request(
         "/location-suggestions?query=" + encodeURIComponent(keywords),
         undefined,
         "GET",
         undefined,
         abort.signal,
+        originSchema.array(),
       )
         .then(setTips)
         .catch((e) => {
@@ -44,6 +45,7 @@ export function Location() {
     };
   }, [keywords]);
   const pick = async (point: Omit<Origin, "address">) => {
+    // Only the latest map pick or GPS result may replace the selected address.
     const seq = ++sequence.current;
     setBusy(true);
     setSelected(null);
@@ -53,7 +55,9 @@ export function Location() {
         latitude: String(point.latitude),
         longitude: String(point.longitude),
       });
-      const origin = await request<Origin>(`/resolved-locations?${query}`);
+      const origin = await request(
+        `/resolved-locations?${query}`, undefined, "GET", undefined, undefined, originSchema,
+      );
       if (seq === sequence.current) setSelected(origin);
     } catch (e) {
       if (seq === sequence.current)
@@ -77,7 +81,7 @@ export function Location() {
     }
   };
   return (
-    <>
+    <section className="location-page">
       <header className="compact-heading">
         <button aria-label="返回首页" onClick={() => navigate("/")}>
           <ArrowLeft />
@@ -141,6 +145,6 @@ export function Location() {
         使用这个位置
       </Button>
       <p className="footnote">仅在你确认后用于推荐，不持续追踪位置。</p>
-    </>
+    </section>
   );
 }

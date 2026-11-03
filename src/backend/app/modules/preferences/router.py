@@ -4,7 +4,11 @@ from app.api.dependencies import ContainerDependency
 from app.api.errors import error_responses
 from app.api.schemas import Envelope
 from app.modules.auth.dependencies import CurrentUserDependency, MutationUserDependency
-from app.modules.preferences.schemas import PreferencesResponse, PreferencesUpdate
+from app.modules.preferences.schemas import (
+    PreferenceLearningUpdate,
+    PreferencesResponse,
+    PreferencesUpdate,
+)
 
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
@@ -24,3 +28,12 @@ async def replace_preferences(
     user: MutationUserDependency,
 ) -> Envelope[PreferencesResponse]:
     return Envelope(data=await services.preferences.save(user.user.id, body))
+
+
+@router.patch("/learning", responses=error_responses(401, 403, 422, 503))
+async def update_preference_learning(
+    body: PreferenceLearningUpdate,
+    services: ContainerDependency,
+    user: MutationUserDependency,
+) -> Envelope[PreferencesResponse]:
+    return Envelope(data=await services.preferences.set_learning(user.user.id, body.enabled))

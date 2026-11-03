@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    StringConstraints,
     field_serializer,
     model_serializer,
     model_validator,
@@ -18,6 +19,7 @@ from app.core.models import Model
 
 SearchRadius = Literal[500, 1000, 2000, 5000]
 ALLOWED_FOOD_LIMIT = 5
+FoodName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
 
 
 class Budget(Model):
@@ -38,17 +40,12 @@ class Budget(Model):
 class Preferences(Model):
     budget_per_person: Budget = Field(default_factory=Budget)
     radius_meters: SearchRadius = 2000
-    excluded_foods: list[str] = Field(default_factory=list, max_length=12)
+    excluded_foods: list[FoodName] = Field(default_factory=list, max_length=12)
 
-    allowed_foods: list[str] = Field(default_factory=list, max_length=ALLOWED_FOOD_LIMIT)
+    allowed_foods: list[FoodName] = Field(default_factory=list, max_length=ALLOWED_FOOD_LIMIT)
 
     @model_validator(mode="after")
     def categories(self) -> Preferences:
-        if any(
-            not c.strip() or len(c) > 30
-            for c in self.excluded_foods + self.allowed_foods
-        ):
-            raise ValueError("食物名称须为 1–30 字")
         if set(self.allowed_foods) & set(self.excluded_foods):
             raise ValueError("限定的食物不能同时被排除")
         return self
@@ -62,11 +59,12 @@ class PreferenceOverrides(Model):
     budget_per_person: Budget | None = None
     radius_meters: SearchRadius | None = None
     request_text: str | None = Field(default=None, max_length=1000)
-    allowed_foods: list[str] | None = Field(default=None, max_length=ALLOWED_FOOD_LIMIT)
-    excluded_foods: list[str] | None = Field(default=None, max_length=12)
+    allowed_foods: list[FoodName] | None = Field(default=None, max_length=ALLOWED_FOOD_LIMIT)
+    excluded_foods: list[FoodName] | None = Field(default=None, max_length=12)
 
     @model_serializer(mode="wrap")
     def sparse(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> dict[str, object]:
+        # Omitted keys inherit defaults; explicit null budget bounds still pin an unlimited budget.
         keys = {to_camel(key) if info.by_alias else key for key in self.model_fields_set}
         return {key: value for key, value in handler(self).items() if key in keys}
 
@@ -74,9 +72,8 @@ class PreferenceOverrides(Model):
     def valid_overrides(self) -> PreferenceOverrides:
         if any(getattr(self, key) is None for key in self.model_fields_set):
             raise ValueError("恢复自动学习请移除该字段；不限预算请使用 min/max 为 null")
-        Preferences(
-            allowed_foods=self.allowed_foods or [], excluded_foods=self.excluded_foods or []
-        )
+        if set(self.allowed_foods or []) & set(self.excluded_foods or []):
+            raise ValueError("限定的食物不能同时被排除")
         return self
 
 
@@ -85,7 +82,12 @@ class PreferencesUpdate(Model):
     overrides: PreferenceOverrides
 
 
+class PreferenceLearningUpdate(Model):
+    enabled: bool = Field(strict=True)
+
+
 class LearningStatus(Model):
+    enabled: bool = False
     meal_count: int = 0
     status: Literal["idle", "queued", "running", "failed"] = "idle"
     last_success_at: datetime | None = None

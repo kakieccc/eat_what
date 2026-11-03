@@ -29,8 +29,11 @@ class RunStreamStatus:
 class ParentSnapshot:
     status: str
     session_id: str
+    request: DecisionRequest
+    original_request: DecisionRequest
+    has_choice: bool
     excluded_place_keys: list[str]
-    place_snapshots: list[dict[str, object]]
+    places: list[Place]
     retry_state: State
 
 

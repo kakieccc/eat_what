@@ -1,7 +1,7 @@
 from app.modules.decision.schemas import DecisionRunResponse
 from app.modules.decision.service.queries import DecisionQueryService
 from app.modules.history.ports import HistoryRepository
-from app.modules.history.schemas import HistoryPage
+from app.modules.history.schemas import HistoryCursor, HistoryPage
 from app.modules.places.service import PlaceService
 
 
@@ -13,7 +13,7 @@ class HistoryService:
         self.queries = queries
         self.places = places
 
-    async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage:
+    async def list_sessions(self, user_id: str, cursor: HistoryCursor | None, limit: int) -> HistoryPage:
         page = await self.repository.list_sessions(user_id, cursor, limit)
         return page.model_copy(
             update={

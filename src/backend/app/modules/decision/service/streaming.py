@@ -39,6 +39,7 @@ class DecisionStreamService:
 
     @asynccontextmanager
     async def connection(self, user_id: str) -> AsyncIterator[None]:
+        # No await between checking and reserving: counters are atomic within this API process.
         count = self._connections.get(user_id, 0)
         if count >= self.max_per_user:
             raise AppError("USER_STREAM_LIMIT_REACHED", "当前账号的实时进度连接已满", 429, True, retry_after=2)
@@ -79,6 +80,7 @@ class DecisionStreamService:
                         if event.type == "runFailed":
                             return
                 if status.status == "completed":
+                    # Build terminal results from committed business rows, not stored progress events.
                     data = await self.queries.get_for_user(user_id, run_id)
                     yield ResultEvent(data=data.model_dump(mode="json", by_alias=True))
                     return

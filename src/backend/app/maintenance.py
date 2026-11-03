@@ -24,6 +24,7 @@ BATCH_SIZE = 1000
 async def cleanup(
     sessions: async_sessionmaker[AsyncSession], *, dry_run: bool = False
 ) -> dict[str, int]:
+    # Keep a fixed horizon so rows expiring during cleanup wait for the next invocation.
     cutoff = now()
     counts: dict[str, int] = {}
     for model, column, until in (
@@ -43,6 +44,7 @@ async def cleanup(
                     ) or 0
             else:
                 while True:
+                    # Commit each batch independently to release row locks during live traffic.
                     async with sessions.begin() as session:
                         await session.execute(text("SET LOCAL statement_timeout = '5s'"))
                         expired = (

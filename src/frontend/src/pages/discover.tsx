@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, MapPin } from "lucide-react";
+import { ArrowLeft, CircleDollarSign, MapPin, RefreshCw, SlidersHorizontal, Star, Utensils } from "lucide-react";
+import { PageHero } from "../components/brand";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { PlaceCard } from "../components/place-card";
@@ -11,17 +12,19 @@ import { ApiError, errorMessage } from "../lib/api";
 import { isDiscardedRun, readRecommendation, useMealBusy } from "../lib/recommendations";
 import {
   fromDecisionRequest,
+  budgetSchema,
   type Run,
   type Place,
   type SearchRadius,
 } from "../lib/schemas";
-import { formatDistance } from "../lib/utils";
+import { formatBudget, formatDistance } from "../lib/utils";
 
 export function Discover() {
   const draft = useDraft(),
     client = useQueryClient(),
     navigate = useNavigate();
   const [selected, setSelected] = useState<string | null>(null);
+  const [showMap, setShowMap] = useState(false);
   const [newRadius, setNewRadius] = useState<SearchRadius | undefined>(
     undefined,
   );
@@ -74,62 +77,46 @@ export function Discover() {
   };
   const working =
     busy || run?.status === "running" || run?.status === "pending";
+  const preferences = run?.request.preferences ?? draft.preferences;
+  const budget = budgetSchema.safeParse({
+    min: preferences.budgetPerPerson.min,
+    max: newBudget,
+  });
   if (run?.choice) {
-    const chosen = run.places.find(
-      (place) => place.candidateId === run.choice?.candidateId,
-    );
-    return (
-      <>
-        <header className="compact-heading">
-          <h1>本次选餐已结束</h1>
-          <Link to="/history">查看历史</Link>
-        </header>
-        <section className="empty">
-          <Check size={48} />
-          <h2>{chosen?.name ?? "已选定餐厅"}</h2>
-          <p role="status">选择已保存，可以在历史中回看。</p>
-          <Button asChild>
-            <Link to={`/decision-runs/${run.decisionRunId}`}>查看已选餐厅</Link>
-          </Button>
-          <Button variant="outline" disabled={busy} onClick={() => {
-            draft.startNewMeal();
-            navigate("/");
-          }}>
-            开始新的选餐
-          </Button>
-        </section>
-      </>
-    );
+    return <Navigate to={`/decision-runs/${run.decisionRunId}`} replace />;
   }
   return (
     <>
-      <header className="compact-heading">
+      <PageHero className="discovery-hero">
+        <Link className="back-link" to="/" aria-label="返回首页"><ArrowLeft /></Link>
         <h1>{working ? "正在为你寻找合适的一餐" : "附近，合你心意"}</h1>
-        <Button
-          variant="ghost"
-          disabled={working}
-          onClick={() => (run ? editRequest(run.request) : navigate("/"))}
-        >
-          调整条件
-        </Button>
-      </header>
-      <p className="address-summary">
-        <MapPin size={16} />
-        {run?.request.origin.address ||
-          draft.origin?.address ||
-          "尚未确认出发位置"}
-        {" · 搜索半径 "}
-        {formatDistance(
-          run?.request.preferences.radiusMeters ??
-            draft.preferences.radiusMeters,
-        )}
-      </p>
+        <p className="address-summary">
+          <MapPin size={16} />
+          {run?.request.origin.address || draft.origin?.address || "尚未确认出发位置"}
+        </p>
+        <p className="condition-summary">
+          {formatDistance(preferences.radiusMeters)} 内 · {formatBudget(preferences.budgetPerPerson)}
+          <span>{" · "}{preferences.allowedFoods.length ? preferences.allowedFoods.join("、") : "不限菜系"}</span>
+        </p>
+        <div className="hero-actions">
+          <Button
+            variant="outline"
+            disabled={working}
+            onClick={() => (run ? editRequest(run.request) : navigate("/"))}
+          >
+            <SlidersHorizontal data-icon="inline-start" />调整条件
+          </Button>
+          <Button variant="outline" aria-expanded={showMap} aria-controls="recommendation-map" onClick={() => setShowMap(!showMap)}>
+            <MapPin data-icon="inline-start" />{showMap ? "收起地图" : "查看地图"}
+          </Button>
+        </div>
+      </PageHero>
       {run?.warnings.map((warning) => (
         <p className="warning-text" role="status" key={warning}>
           {warning}
         </p>
       ))}
-      <FoodMap
+      {showMap && <section id="recommendation-map" aria-label="推荐地图"><FoodMap
         origin={run?.request.origin ?? draft.origin}
         places={run?.places ?? []}
         selected={selected}
@@ -137,9 +124,9 @@ export function Discover() {
           setSelected(id);
           document
             .getElementById("place-" + id)
-            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            ?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
         }}
-      />
+      /></section>}
       {runQuery.error instanceof ApiError &&
         runQuery.error.code === "WORKFLOW_UPGRADED" && (
           <Button
@@ -180,20 +167,21 @@ export function Discover() {
         </div>
       )}
       {run?.status === "completed" && (
-        <>
+        <section className="recommendation-results" aria-label="推荐结果">
           <div className="refine-row">
-            {[
-              ["closer", "更近"],
-              ["cheaper", "更便宜"],
-              ["higherRated", "评分更高"],
-              ["differentCuisine", "换个口味"],
-              ["refresh", "换一批"],
-            ].map(([action, label]) => (
+            {([
+              ["closer", "更近", MapPin],
+              ["cheaper", "更便宜", CircleDollarSign],
+              ["higherRated", "评分更高", Star],
+              ["differentCuisine", "换个口味", Utensils],
+              ["refresh", "换一批", RefreshCw],
+            ] as const).map(([action, label, Icon]) => (
               <button
                 disabled={working}
                 key={action}
                 onClick={() => refine(action)}
               >
+                <Icon size={19} aria-hidden="true" />
                 {label}
               </button>
             ))}
@@ -225,6 +213,7 @@ export function Discover() {
                 type="number"
                 min={0}
                 max={10000}
+                step="0.01"
                 value={newBudget}
                 onChange={(e) => setNewBudget(e.target.value)}
               />
@@ -234,22 +223,16 @@ export function Discover() {
               disabled={
                 working ||
                 newBudget === "" ||
-                !Number.isFinite(Number(newBudget)) ||
-                Number(newBudget) <
-                  Number(run.request.preferences.budgetPerPerson.min ?? 0) ||
-                Number(newBudget) > 10000
+                !budget.success
               }
               onClick={() =>
-                refine("changeBudget", {
-                  min: run.request.preferences.budgetPerPerson.min,
-                  max: newBudget,
-                })
+                budget.success && refine("changeBudget", budget.data)
               }
             >
               确认修改预算
             </Button>
           </details>
-          {!run.places?.length && (
+          {!run.places.length && (
             <section className="empty">
               <h2>附近暂时没有合适的选择</h2>
               <p>我们保留了你的条件，没有自动放宽。</p>
@@ -260,7 +243,7 @@ export function Discover() {
             </section>
           )}
           <div className="candidates">
-            {(run.places ?? []).map((place) => (
+            {run.places.map((place) => (
               <div id={"place-" + place.id} key={place.id}>
                 <PlaceCard
                   place={place}
@@ -273,7 +256,7 @@ export function Discover() {
               </div>
             ))}
           </div>
-        </>
+        </section>
       )}
       {!run && !working && !runQuery.error && (
         <div className="empty">

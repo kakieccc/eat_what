@@ -22,6 +22,7 @@ export function FoodMap({
   const [ready, setReady] = useState(false),
     [error, setError] = useState(""),
     [retry, setRetry] = useState(0);
+  // Map listeners need current callbacks without recreating the SDK map on every render.
   const handlers = useRef({ onSelect, onPick });
   handlers.current = { onSelect, onPick };
   useEffect(() => {

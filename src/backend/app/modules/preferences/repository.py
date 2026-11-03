@@ -16,7 +16,6 @@ from app.modules.preferences.mappers import preferences_from_row
 from app.modules.preferences.models import Preference, PreferenceSample
 from app.modules.preferences.ports import MealEvidence
 from app.modules.preferences.schemas import (
-    AccountPreferences,
     LearnedPreferences,
     PreferencesResponse,
     PreferencesUpdate,
@@ -52,12 +51,11 @@ async def record_meal(
         return
     prefill = PrefillSnapshot.model_validate(discovery.prefill_snapshot)
     final = DecisionRequest.model_validate(run.effective_preferences)
-    final_preferences = AccountPreferences(
-        **final.preferences.model_dump(), request_text=final.request_text
-    )
-    conditions = final_preferences.model_dump(mode="json")
+    conditions = {**final.preferences.model_dump(mode="json"), "request_text": final.request_text}
+    baseline = prefill.values.model_dump(mode="json")
+    # Accepting prefilled defaults is not another active expression of the same preference.
     active = {key: value for key, value in conditions.items()
-              if getattr(final_preferences, key) != getattr(prefill.values, key)}
+              if value != baseline[key]}
     row = await locked_preference(session, user_id)
     row.meal_count += 1
     place = place_from_candidate(candidate)
@@ -68,7 +66,7 @@ async def record_meal(
         restaurant_facts={"category_name": place.category_name,
                           "cuisine_types": place.cuisine_types},
     ))
-    if row.meal_count >= 10 and row.meal_count % 5 == 0:
+    if row.learning_enabled and row.meal_count >= 10 and row.meal_count % 5 == 0:
         row.requested_count = row.meal_count
         if row.learning_status != "running":
             row.learning_status = "queued"
@@ -87,15 +85,36 @@ class PreferencesRepository:
         async with self.sessions.begin() as session:
             row = await locked_preference(session, user_id)
             if row.revision != update.revision:
-                raise AppError("PREFERENCE_CONFLICT", "偏好已更新，请重新读取后再保存", 409)
+                raise AppError("PREFERENCE_CONFLICT", "偏好已更新，请刷新页面后再保存", 409)
             row.overrides = update.overrides.model_dump(mode="json", exclude_unset=True)
             row.revision += 1
             result = preferences_from_row(row)
         return result
 
+    async def set_learning(self, user_id: str, enabled: bool) -> PreferencesResponse:
+        async with self.sessions.begin() as session:
+            row = await locked_preference(session, user_id)
+            if row.learning_enabled == enabled:
+                return preferences_from_row(row)
+            # The switch leaves defaults unchanged, so an open editor keeps its valid revision.
+            row.learning_enabled = enabled
+            if enabled:
+                eligible_count = row.meal_count // 5 * 5
+                if eligible_count >= 10 and eligible_count > row.attempted_count:
+                    row.requested_count = eligible_count
+                    row.learning_status = "queued"
+            else:
+                row.requested_count = row.attempted_count
+                row.learning_status = "idle"
+                # Revoke running claims so a late result cannot write after learning is disabled.
+                row.lease_token = None
+                row.lease_until = None
+            return preferences_from_row(row)
+
     @staticmethod
     def _pending() -> Select[tuple[Preference]]:
         return select(Preference).where(
+            Preference.learning_enabled.is_(True),
             Preference.learning_status.in_(["queued", "running"]),
             Preference.requested_count > Preference.attempted_count,
             or_(Preference.lease_until.is_(None), Preference.lease_until < now()),
@@ -115,12 +134,14 @@ class PreferencesRepository:
                 return None
             row.lease_token = uid()
             row.lease_until = now() + timedelta(seconds=lease_seconds)
+            # Meals added during learning belong to a later batch, not this evidence snapshot.
             row.claimed_count = row.requested_count
             row.learning_status = "running"
             return TaskClaim(row.id, row.lease_token)
 
     async def _claimed(self, session: AsyncSession, claim: TaskClaim) -> Preference:
         row = await session.scalar(select(Preference).where(
+            Preference.learning_enabled.is_(True),
             Preference.id == claim.task_id, Preference.lease_token == claim.lease_token,
             Preference.lease_until > now(), Preference.learning_status == "running",
         ).with_for_update())
@@ -148,6 +169,7 @@ class PreferencesRepository:
     async def finish(self, claim: TaskClaim, result: LearnedPreferences | None) -> None:
         async with self.sessions.begin() as session:
             row = await self._claimed(session, claim)
+            # Failed learning waits for new meal evidence instead of retrying the same batch daily.
             row.attempted_count = row.claimed_count
             if result is not None:
                 row.learned = result.model_dump(mode="json")

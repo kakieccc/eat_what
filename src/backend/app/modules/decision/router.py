@@ -61,6 +61,7 @@ async def stream_decision_run_events(
     request: Request,
     services: ContainerDependency,
     user: CurrentUserDependency,
+    # Keep the slot until the response closes, including disconnects before the first event.
     _connection: Annotated[None, Depends(stream_connection, scope="request")],
 ) -> StreamingResponse:
     await services.decision_queries.stream_status(user.user.id, str(run_id))

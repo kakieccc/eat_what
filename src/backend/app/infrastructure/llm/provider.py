@@ -41,6 +41,7 @@ class OpenAICompatibleLlm:
             known_fields = set(schema.model_fields)
             for definition in (description, *description.get("$defs", {}).values()):
                 known_fields.update(definition.get("properties", {}))
+            # Validation paths can contain model-supplied keys; log only known schema field names.
             failures = [
                 {
                     "path": [

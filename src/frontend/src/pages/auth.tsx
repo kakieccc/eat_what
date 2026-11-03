@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { useAuth } from "../lib/auth";
+import { Brand, PageHero } from "../components/brand";
 
 function returnPath(state: unknown): string {
   const from = state && typeof state === "object" && "from" in state
@@ -41,21 +42,24 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   if (auth.state === "authenticated")
     return <Navigate to={destination} replace />;
   return <section className="auth-page">
-    <section className="auth-card">
+    <PageHero className="auth-hero">
+      <Brand />
       <h1>{mode === "register" ? "创建账号" : "欢迎回来"}</h1>
-      <p>登录后，开始寻找今天这一餐。</p>
+    </PageHero>
+    <section className="auth-card">
       <form onSubmit={submit}>
         <label className="field-label">用户名
           <input required minLength={3} maxLength={32} pattern="[A-Za-z0-9_]+"
+            placeholder={mode === "register" ? "3–32 位字母、数字或下划线" : "输入用户名"}
             autoComplete="username" value={username}
             onChange={(event) => setUsername(event.target.value)} />
         </label>
         {mode === "register" && <label className="field-label">昵称
-          <input required maxLength={40} autoComplete="nickname" value={displayName}
+          <input required maxLength={40} autoComplete="nickname" placeholder="怎么称呼你" value={displayName}
             onChange={(event) => setDisplayName(event.target.value)} />
         </label>}
         <label className="field-label">密码
-          <input required type="password" minLength={mode === "register" ? 8 : undefined}
+          <input required type="password" placeholder={mode === "register" ? "至少 8 位字符" : "输入密码"} minLength={mode === "register" ? 8 : undefined}
             maxLength={128} autoComplete={mode === "register" ? "new-password" : "current-password"}
             value={password} onChange={(event) => setPassword(event.target.value)} />
         </label>

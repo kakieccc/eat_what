@@ -12,6 +12,7 @@ async def gather_cancel_on_error[T](*awaitables: Awaitable[T]) -> list[T]:
     try:
         return list(await asyncio.gather(*tasks))
     except BaseException:
+        # gather leaves siblings running after an error unless explicitly cancelled.
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

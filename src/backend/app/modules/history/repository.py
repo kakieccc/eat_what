@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
-from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -12,14 +10,14 @@ from app.core.errors import AppError
 from app.modules.choice.models import PlaceChoice
 from app.modules.decision.models import DecisionRun, DiscoverySession, PlaceCandidate
 from app.modules.decision.repository.mappers import place_from_candidate, request_for_run
-from app.modules.history.schemas import HistoryChoice, HistoryItem, HistoryPage
+from app.modules.history.schemas import HistoryChoice, HistoryCursor, HistoryItem, HistoryPage
 
 
 class HistoryRepository:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self.sessions = sessions
 
-    async def list_sessions(self, user_id: str, cursor: str | None, limit: int) -> HistoryPage:
+    async def list_sessions(self, user_id: str, cursor: HistoryCursor | None, limit: int) -> HistoryPage:
         async with self.sessions() as session:
             query = (
                 select(DiscoverySession, PlaceChoice, PlaceCandidate, DecisionRun)
@@ -32,19 +30,7 @@ class HistoryRepository:
                 )
             )
             if cursor is not None:
-                try:
-                    if len(cursor) > 1024:
-                        raise ValueError
-                    values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
-                    if not isinstance(values, list) or len(values) != 2 or not all(isinstance(v, str) for v in values):
-                        raise ValueError
-                    date_text, row_id = values
-                    timestamp = datetime.fromisoformat(date_text)
-                    row_id = str(UUID(row_id))
-                    if timestamp.tzinfo is None:
-                        raise ValueError
-                except (ValueError, TypeError, UnicodeError):
-                    raise AppError("INVALID_CURSOR", "分页参数无效") from None
+                timestamp, row_id = cursor
                 query = query.where(
                     or_(
                         PlaceChoice.selected_at < timestamp,
@@ -58,6 +44,7 @@ class HistoryRepository:
             sessions = list(
                 (
                     await session.execute(
+                        # The ID breaks timestamp ties and must match the cursor predicate above.
                         query.order_by(
                             PlaceChoice.selected_at.desc(), DiscoverySession.id.desc()
                         ).limit(limit + 1)

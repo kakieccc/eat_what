@@ -4,7 +4,8 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, ClipboardList, MapPin } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, ChevronRight, ClipboardList, MapPin } from "lucide-react";
+import { PageHero } from "../components/brand";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
 import { ApiError, request } from "../lib/api";
@@ -12,26 +13,11 @@ import { isDiscardedRun, useMealBusy } from "../lib/recommendations";
 import { useDraft } from "../lib/store";
 import {
   fromDecisionRequest,
+  historySchema,
   runSchema,
-  type Place,
-  type DecisionRequest,
-  type Run,
 } from "../lib/schemas";
-import { formatDistance, navigationHref } from "../lib/utils";
+import { formatDistance } from "../lib/utils";
 import { useParams } from "react-router-dom";
-type HistoryData = {
-  items: {
-    id: string;
-    createdAt: string;
-    request: DecisionRequest;
-    choice: {
-      id: string;
-      decisionRunId: string;
-      place: Place;
-    };
-  }[];
-  nextCursor?: string | null;
-};
 export function History() {
   const navigate = useNavigate(),
     draft = useDraft();
@@ -39,10 +25,11 @@ export function History() {
   const query = useInfiniteQuery({
     queryKey: ["history"],
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) =>
-      request<HistoryData>(
+    queryFn: ({ pageParam, signal }) =>
+      request(
         "/discovery-sessions" +
           (pageParam ? "?cursor=" + encodeURIComponent(pageParam) : ""),
+        undefined, "GET", undefined, signal, historySchema,
       ),
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     retry: false,
@@ -50,10 +37,7 @@ export function History() {
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   return (
     <>
-      <header className="page-heading">
-        <h1>每一餐，都有迹可循</h1>
-        <p>记下选择，让下一次更轻松。</p>
-      </header>
+      <PageHero className="history-hero"><h1>用餐历史</h1></PageHero>
       {busy && <p role="status">当前任务尚未完成或待确认，可以继续查看历史。</p>}
       {query.isPending ? (
         <p>正在读取历史…</p>
@@ -68,11 +52,6 @@ export function History() {
         <section className="empty history-empty">
           <ClipboardList size={58} />
           <h2>还没有用餐记录</h2>
-          <p>
-            当你做出用餐决定，
-            <br />
-            这一餐就会留在这里。
-          </p>
           <Button onClick={() => navigate("/")}>去选今天的第一餐</Button>
         </section>
       ) : (
@@ -89,7 +68,7 @@ export function History() {
               >
                 <h2>
                   {item.choice.place.name}
-                  <ArrowUpRight size={18} />
+                  <ChevronRight size={22} />
                 </h2>
                 <p>
                   {item.choice.place.cuisineTypes.join(" · ")} · 直线{" "}
@@ -136,7 +115,7 @@ export function Detail() {
   const query = useQuery({
     queryKey: ["run", runId],
     queryFn: ({ signal }) =>
-      request<Run>(
+      request(
         "/decision-runs/" + runId,
         undefined,
         "GET",
@@ -151,15 +130,15 @@ export function Detail() {
       ? run.places.find((p) => p.candidateId === run.choice?.candidateId)
       : undefined;
   const superseded = query.error instanceof ApiError && query.error.code === "RUN_SUPERSEDED";
-  const navigation = navigationHref(place?.navigationUrl);
+  const navigation = place?.navigationUrl;
   return (
     <>
-      <header className="compact-heading">
+      {!place && <header className="compact-heading">
         <Link to="/history" aria-label="返回历史">
           <ArrowLeft />
         </Link>
         <h1>用餐决策详情</h1>
-      </header>
+      </header>}
       {query.isPending ? (
         <p>正在读取这次选择…</p>
       ) : query.isError ? (
@@ -168,17 +147,20 @@ export function Detail() {
           {superseded && <Link to="/history">查看历史</Link>}
         </div>
       ) : place && run ? (
-        <>
-          <h2 className="detail-name">{place.name}</h2>
+        <section className="place-detail">
+          <PageHero className="detail-hero">
+            <Link className="back-link" to="/history" aria-label="返回历史"><ArrowLeft /><span>这一餐，选好了</span></Link>
+            <h1>{place.name}</h1>
+            <p>{place.cuisineTypes.join(" · ")}</p>
+          </PageHero>
           {run.warnings.map((warning) => (
             <p className="warning-text" role="status" key={warning}>{warning}</p>
           ))}
-          <p className="muted">
-            {place.cuisineTypes.join(" · ")} ·{" "}
-            {place.averageCost
-              ? `参考人均 ¥${place.averageCost}`
-              : "人均暂无数据"}
-          </p>
+          <dl className="detail-facts">
+            <div><dt>直线距离</dt><dd>{formatDistance(place.straightLineDistanceMeters)}</dd></div>
+            <div><dt>参考人均</dt><dd>{place.averageCost != null ? `¥${place.averageCost}` : "暂无数据"}</dd></div>
+            <div><dt>评分</dt><dd>{place.rating ?? "暂无数据"}</dd></div>
+          </dl>
           <FoodMap
             origin={run.request.origin}
             places={[place]}
@@ -188,18 +170,19 @@ export function Detail() {
             <MapPin size={16} />
             {place.address}
           </p>
+          <h2 className="reason-heading">推荐理由</h2>
           <p className="reason">{place.reason}</p>
-          <p>
+          <p className="distance-note">
             距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}
             ，实际道路距离可能更长。
           </p>
-          {place.warnings?.map((w) => (
+          {place.warnings.map((w) => (
             <p className="warning-text" key={w}>
               {w}
             </p>
           ))}
           <p role="status" className="footnote">
-            本次选餐已结束，选择已保存，可以在历史中回看。
+            已保存，可在历史中回看。
           </p>
           {navigation && (
             <a
@@ -212,7 +195,7 @@ export function Detail() {
               <ArrowUpRight size={18} />
             </a>
           )}
-          <Button variant="outline" disabled={busy} onClick={() => {
+          <Button className="new-meal" variant="ghost" disabled={busy} onClick={() => {
             draft.startNewMeal();
             navigate("/");
           }}>
@@ -224,7 +207,7 @@ export function Detail() {
               timeZone: "Asia/Shanghai",
             })}
           </p>
-        </>
+        </section>
       ) : (
         <section className="empty">
           <ClipboardList size={48} />

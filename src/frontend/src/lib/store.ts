@@ -61,7 +61,7 @@ export const useDraft = create<Draft>()(
       prefill: null,
       initialize: (preferences, source, revision) =>
         set({
-          preferences: preferencesDraftSchema.parse(preferences),
+          preferences,
           hasDraft: true,
           prefill: {
             values: structuredClone(accountDefaults(preferences)),
@@ -82,7 +82,8 @@ export const useDraft = create<Draft>()(
       setJob: (job) => set({ job }),
       enqueue: (kind, path, body, runId = null) =>
         set((state) => ({
-          job: backgroundJobSchema.parse({
+          job: {
+            // Resending an unconfirmed operation must reuse its original idempotency key.
             key:
               state.job &&
               state.job.status !== "saved" &&
@@ -98,13 +99,13 @@ export const useDraft = create<Draft>()(
             runId,
             status: "submitting",
             error: null,
-          }),
+          },
         })),
       setOwnerId: (ownerId) => set({ ownerId }),
       setOrigin: (origin) => set({ origin }),
       setPreferences: (preferences) =>
         set({
-          preferences: preferencesDraftSchema.parse(preferences),
+          preferences,
           hasDraft: true,
         }),
       setRunId: (runId) =>
@@ -141,6 +142,7 @@ export const useDraft = create<Draft>()(
         runId,
         job,
       }),
+      // Restore one validated snapshot so the owner, request, and pending job stay together.
       merge: (stored, current) =>
         stored === undefined ? current : { ...current, ...draftSchema.parse(stored) },
       onRehydrateStorage: () => (_state, error) => {

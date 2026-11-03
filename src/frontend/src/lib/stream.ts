@@ -79,6 +79,7 @@ export async function subscribe(
     if (!terminal) throw new Error("连接已断开，可以恢复查询结果");
   } finally {
     signal.removeEventListener("abort", abort);
+    // Terminal events also close HTTP so the server can release its limited SSE slot.
     await cancel();
     reader.releaseLock();
   }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +16,7 @@ class Preference(IdentityMixin, Base):
     learned: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
     overrides: Mapped[dict[str, object]] = mapped_column(JSONB, default=dict)
     revision: Mapped[int] = mapped_column(Integer, default=0)
+    learning_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     meal_count: Mapped[int] = mapped_column(Integer, default=0)
     requested_count: Mapped[int] = mapped_column(Integer, default=0)
     attempted_count: Mapped[int] = mapped_column(Integer, default=0)

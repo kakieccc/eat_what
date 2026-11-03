@@ -54,6 +54,7 @@ class AmapClient:
         self.next_request_at = dict.fromkeys(OPERATIONS, 0.0)
 
     async def _wait_for_slot(self, operation: str) -> None:
+        # Hold the lock through the delay so waiters cannot reserve the same request time.
         async with self.locks[operation]:
             loop = asyncio.get_running_loop()
             await asyncio.sleep(max(0.0, self.next_request_at[operation] - loop.time()))

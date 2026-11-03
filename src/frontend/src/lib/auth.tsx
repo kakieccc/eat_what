@@ -1,16 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { advanceSession, getSessionVersion, configError, endpoint, request, setCsrfToken, setUnauthorizedHandler } from "./api";
+import { advanceSession, getSessionVersion, configError, endpoint, request, responseData, setCsrfToken, setUnauthorizedHandler } from "./api";
 import { useDraft } from "./store";
 import { notifyAuthChanged, watchAuthChanges, withAuthLock } from "./auth-sync";
+import { authPayloadSchema, userSchema, type AuthPayload, type User } from "./schemas";
 
-export type User = {
-  id: string;
-  username: string;
-  displayName: string;
-  createdAt: string;
-};
-type AuthPayload = { user: User; csrfToken: string };
 type AuthState = "loading" | "anonymous" | "authenticated" | "error";
 type AuthContextValue = {
   state: AuthState;
@@ -31,11 +25,7 @@ async function readSession(signal?: AbortSignal): Promise<AuthPayload | null> {
   });
   if (response.status === 401) return null;
   if (!response.ok) throw new Error("无法检查登录状态");
-  const payload = await response.json();
-  const data = payload.data as AuthPayload | undefined;
-  if (!payload.success || !data?.user || !data.csrfToken)
-    throw new Error("登录状态响应无效");
-  return data;
+  return authPayloadSchema.parse(await responseData(response, signal));
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -145,12 +135,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const register = async (username: string, password: string, displayName: string) => {
     await changeSession("/auth/register", {
-      username, password, displayName: displayName.trim(),
+      username, password, displayName,
     });
   };
   const updateName = async (displayName: string) => {
     const version = getSessionVersion();
-    const data = await request<User>("/auth/me", { displayName }, "PATCH");
+    const data = await request("/auth/me", { displayName }, "PATCH", undefined, undefined, userSchema);
     if (version === getSessionVersion()) setUser(data);
   };
   const changePassword = async (currentPassword: string, newPassword: string) => {

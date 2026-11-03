@@ -68,6 +68,7 @@ class TaskWorker:
             try:
                 done, _ = await asyncio.wait({work, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
                 if heartbeat in done:
+                    # A failed renewal cancels work; repository lease checks fence later writes.
                     await heartbeat
                 await work
             finally:

@@ -20,12 +20,13 @@ let sessionVersion = 0;
 export const getSessionVersion = () => sessionVersion;
 export const advanceSession = () => ++sessionVersion;
 export function requireCurrentSession(version: number, signal?: AbortSignal) {
+  // A late response or 401 from an old account must not update the new account's state.
   if (version !== sessionVersion || signal?.aborted)
     throw new DOMException("Request is no longer current", "AbortError");
 }
 export function errorMessage(code: string, message?: string) {
   if (code === "QUEUE_TIMEOUT") return "排队超过等待时限，请重新推荐。";
-  if (code === "PREFERENCE_CONFLICT") return "偏好已更新，请点击重新读取偏好后再修改保存";
+  if (code === "PREFERENCE_CONFLICT") return "偏好已更新，请刷新页面后再保存";
   if (code === "SELECTION_COMPLETED")
     return "本次选餐已结束，请开始新的选餐。";
   if (code === "WORKFLOW_UPGRADED")
@@ -75,6 +76,10 @@ export async function fetchResponse(path: string, options: RequestInit): Promise
   return response;
 }
 
+const successEnvelopeSchema = z.object({
+  success: z.literal(true),
+  data: z.unknown(),
+});
 const errorEnvelopeSchema = z.object({
   success: z.literal(false),
   error: z.object({
@@ -93,7 +98,8 @@ export async function responseData(response: Response, signal?: AbortSignal): Pr
     return null;
   });
   requireCurrentSession(version, signal);
-  if (!response.ok || !payload?.success) {
+  const result = successEnvelopeSchema.safeParse(payload);
+  if (!response.ok || !result.success) {
     const parsed = errorEnvelopeSchema.safeParse(payload);
     const envelope = parsed.success ? parsed.data : null;
     const code = envelope?.error.code ?? (response.status >= 500 ? "INTERNAL_ERROR" : "UNKNOWN");
@@ -106,7 +112,7 @@ export async function responseData(response: Response, signal?: AbortSignal): Pr
       envelope?.meta?.requestId ?? response.headers.get("X-Request-ID"),
     );
   }
-  return payload.data;
+  return result.data.data;
 }
 export async function request<T>(
   path: string,

@@ -22,8 +22,7 @@ from app.modules.decision.repository.mappers import place_from_candidate, reques
 from app.modules.decision.repository.transaction import DecisionTransaction
 from app.modules.decision.schemas import DecisionRequest, DecisionRunResponse
 from app.modules.decision.workflow.events import RunFailed, WorkflowError
-from app.modules.decision.workflow.state import SCHEMA_VERSION, State
-from app.modules.places.schemas import Place
+from app.modules.decision.workflow.state import SCHEMA_VERSION, STATE_ADAPTER, State
 from app.modules.task.errors import LostTaskLease
 from app.modules.task.models import Task, TaskStatus, TaskStep
 from app.modules.task.repository import record_event
@@ -131,6 +130,7 @@ class DecisionRepository:
     @asynccontextmanager
     async def transaction(self, user_id: str) -> AsyncIterator[DecisionTransaction]:
         async with self.sessions.begin() as session:
+            # Different idempotency keys still compete for the same user's single task slot.
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
                 {"key": lock_id("decision-tasks:" + user_id)},
@@ -147,10 +147,10 @@ class DecisionRepository:
                 task.status = TaskStatus.succeeded.value
                 task.lease_token = None
                 task.lease_until = None
-                state = cast(State, dict(task.state))
-                state["already_completed"] = True
-                return task.id, run.id, task.request_id, state, run.duration_ms
-            state = cast(State, dict(task.state))
+                return task.id, run.id, task.request_id, {"already_completed": True}, run.duration_ms
+            if task.state.get("schema_version") != SCHEMA_VERSION:
+                raise AppError("WORKFLOW_UPGRADED", "任务版本已更新，请重新推荐", 409)
+            state = STATE_ADAPTER.validate_python(task.state)
             state.update({"task_id": task.id, "lease_token": claim.lease_token})
             run.status = "running"
             run.error_code = None
@@ -172,6 +172,7 @@ class DecisionRepository:
 
     async def _owned(self, session: AsyncSession, claim: TaskClaim) -> Task:
         await self._current_session(session, claim)
+        # Waiting for the discovery lock may leave the already loaded Task stale.
         task = await session.scalar(
             select(Task)
             .where(
@@ -196,7 +197,7 @@ class DecisionRepository:
             assert discovery is not None
             discovery.seen_place_keys = list(dict.fromkeys([
                 *discovery.seen_place_keys,
-                *(Place.model_validate(raw).id for raw in state["places"]),
+                *(place.id for place in state["places"]),
             ]))
             self._persist_result(session, run, state)
             task.status = TaskStatus.succeeded.value
@@ -246,8 +247,8 @@ class DecisionRepository:
             return False
 
     def _persist_result(self, session: AsyncSession, run: DecisionRun, state: State) -> None:
-        for rank, raw in enumerate(state["places"], 1):
-            place = Place.model_validate(raw).model_copy(
+        for rank, candidate in enumerate(state["places"], 1):
+            place = candidate.model_copy(
                 update={"candidate_id": uid(), "rank": rank}
             )
             session.add(
@@ -259,7 +260,7 @@ class DecisionRepository:
                     place_snapshot=place.model_dump(mode="json"),
                 )
             )
-        run.effective_preferences = state["request"]
+        run.effective_preferences = state["request"].model_dump(mode="json")
         run.filter_summary = dict(state["filter_summary"])
         run.llm_used = True
         run.status = "completed"

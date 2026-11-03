@@ -79,6 +79,7 @@ class TaskStore:
                 task.phase = "queued"
                 task.lease_token = None
                 task.lease_until = None
+                # Reclaimed tasks restart from input; keep event sequences for connected clients.
                 await session.execute(delete(TaskStep).where(TaskStep.task_id == task.id))
 
             selected = await session.scalar(
@@ -101,6 +102,7 @@ class TaskStore:
             task.lease_token = token
             task.lease_until = current + timedelta(seconds=lease_seconds)
             task.attempts += 1
+            # Each claim gets a fresh execution budget, excluding time waiting in the queue.
             task.started_at = current
             task.completed_at = None
             return TaskClaim(task_id=task.id, lease_token=token)

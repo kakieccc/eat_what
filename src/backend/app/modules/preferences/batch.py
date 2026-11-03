@@ -31,6 +31,7 @@ async def run_batch(
     started = time.monotonic()
     repository = PreferencesRepository(sessions)
     worker = TaskWorker(repository, PreferenceLearner(repository, llm), lease_seconds=lease_seconds)
+    # A session advisory lock needs this connection held until the entire batch finishes.
     async with engine_of(sessions).connect() as connection:
         acquired = await connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": BATCH_LOCK})
         await connection.commit()
@@ -38,6 +39,7 @@ async def run_batch(
             log.info(json.dumps({"event": "preferenceBatchSkipped", "reason": "alreadyRunning"}))
             return counts
         try:
+            # Snapshot once so new triggers cannot keep this scheduled invocation running forever.
             preference_ids = await repository.pending_ids()
             for preference_id in preference_ids:
                 try:

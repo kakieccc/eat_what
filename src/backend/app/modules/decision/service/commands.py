@@ -6,7 +6,6 @@ from app.modules.decision.ports import DecisionRepository
 from app.modules.decision.rules.refinement import apply_refinement
 from app.modules.decision.schemas import DecisionCreateRequest, DecisionRequest, RefinementRequest
 from app.modules.decision.workflow.state import SCHEMA_VERSION, State
-from app.modules.places.schemas import Place
 from app.modules.preferences.schemas import PrefillSnapshot
 
 
@@ -22,7 +21,11 @@ class DecisionCommandService:
         self, user_id: str, request: DecisionCreateRequest, idempotency_key: str, request_id: str
     ) -> str:
         return await self._create(
-            user_id, DecisionRequest.model_validate(request.model_dump(exclude={"prefill_snapshot"})),
+            user_id, DecisionRequest.model_construct(
+                origin=request.origin, preferences=request.preferences,
+                meal_period=request.meal_period, party_size=request.party_size,
+                request_text=request.request_text,
+            ),
             idempotency_key, request_id, prefill=request.prefill_snapshot,
         )
 
@@ -62,37 +65,28 @@ class DecisionCommandService:
                   "prefill": prefill.model_dump(mode="json") if prefill else None} if request else {}
         )
         async with self.repository.transaction(user_id) as tx:
+            # Hold the user lock through replay lookup, parent reads, and task creation.
             existing = await tx.idempotency(endpoint, key)
             if existing:
                 if existing.request_hash != digest:
                     raise AppError("IDEMPOTENCY_CONFLICT", "请求冲突", 409)
                 return str(existing.response_body["runId"])
-        original = request
-        if parent_id:
-            parent_run = await self.repository.read_for_user(user_id, parent_id)
-            if parent_run.choice is not None:
-                raise AppError("SELECTION_COMPLETED", "本次选餐已结束，请开始新的选餐", 409)
-            if parent_run.status != ("failed" if retry else "completed"):
-                raise AppError("INVALID_STATE", "请求冲突", 409)
-            request = parent_run.request
-            if refinement:
-                request = apply_refinement(request, refinement, [p.id for p in parent_run.places])
-            original = parent_run.original_request
-        assert request is not None and original is not None
-        async with self.repository.transaction(user_id) as tx:
-            existing = await tx.idempotency(endpoint, key)
-            if existing:
-                if existing.request_hash != digest:
-                    raise AppError("IDEMPOTENCY_CONFLICT", "请求冲突", 409)
-                return str(existing.response_body["runId"])
-            await tx.require_task_capacity(self.max_active, self.submissions_per_minute)
+            original = request
             excluded: list[str] = []
             search_excluded: list[str] = []
             old_cuisines: list[str] = []
+            action: str = refinement.action if refinement else ""
             if parent_id:
                 parent = await tx.parent(parent_id)
+                if parent.has_choice:
+                    raise AppError("SELECTION_COMPLETED", "本次选餐已结束，请开始新的选餐", 409)
                 if parent.status != ("failed" if retry else "completed"):
                     raise AppError("INVALID_STATE", "请求冲突", 409)
+                parent_places = parent.places
+                request = parent.request
+                if refinement:
+                    request = apply_refinement(request, refinement, [p.id for p in parent_places])
+                original = parent.original_request
                 session_id = parent.session_id
                 excluded = list(parent.excluded_place_keys)
                 if refinement and refinement.action == "excludePlace":
@@ -102,22 +96,22 @@ class DecisionCommandService:
                     search_excluded = list(
                         dict.fromkeys(excluded + await tx.seen_place_keys(session_id))
                     )
-                old_cuisines = [
-                    c for p in parent.place_snapshots for c in Place.model_validate(p).cuisine_types
-                ]
-            else:
+                old_cuisines = [c for p in parent_places for c in p.cuisine_types]
+                if retry:
+                    # Replay the failed run's search intent, including refresh exclusions.
+                    search_excluded = list(parent.retry_state["excluded"])
+                    old_cuisines = list(parent.retry_state["old_cuisines"])
+                    action = parent.retry_state["action"]
+            assert request is not None and original is not None
+            await tx.require_task_capacity(self.max_active, self.submissions_per_minute)
+            if not parent_id:
                 assert prefill is not None
                 session_id = await tx.create_discovery(original, prefill)
-            action: str = refinement.action if refinement else ""
-            if retry:
-                search_excluded = list(parent.retry_state["excluded"])
-                old_cuisines = list(parent.retry_state["old_cuisines"])
-                action = parent.retry_state["action"]
             run_id = await tx.create_run(session_id, request, parent_id, excluded, action, original)
             state: State = {
                 "schema_version": SCHEMA_VERSION,
                 "decision_run_id": run_id,
-                "request": request.model_dump(mode="json"),
+                "request": request,
                 "excluded": search_excluded,
                 "action": action,
                 "places": [],

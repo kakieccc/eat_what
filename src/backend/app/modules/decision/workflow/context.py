@@ -10,5 +10,5 @@ from app.modules.task.types import TaskClaim
 Emitter = Callable[[TaskClaim, ProgressEvent], Awaitable[None]]
 StepCallback = Callable[[DecisionState, str], Awaitable[None]]
 
-# Runtime budget must not become part of persisted workflow state.
+# ContextVar isolates concurrent runs and keeps runtime deadlines out of persisted state.
 execution_deadline: ContextVar[float | None] = ContextVar("decision_execution_deadline", default=None)

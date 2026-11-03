@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, LoaderCircle } from "lucide-react";
 import { ApiError, errorMessage, request } from "../lib/api";
@@ -13,6 +13,7 @@ import {
 import { choiceResultSchema, runSchema, type Run } from "../lib/schemas";
 import { useDraft } from "../lib/store";
 import { subscribe } from "../lib/stream";
+import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
 const submissionWaitMs = 15_000;
@@ -20,6 +21,7 @@ const submissionWaitMs = 15_000;
 type Step = { node: string; label: string; done: boolean };
 
 export function BackgroundActivity() {
+  const { pathname } = useLocation();
   const client = useQueryClient();
   const job = useDraft((state) => state.job);
   const runId = useDraft((state) => state.runId);
@@ -51,6 +53,7 @@ export function BackgroundActivity() {
     const timer = setTimeout(() => {
       if (!current()) return;
       controller.abort();
+      // Aborting cannot undo server acceptance; retain the body and key for a confirming retry.
       useDraft.getState().setJob({
         ...job,
         status: "failed",
@@ -106,6 +109,7 @@ export function BackgroundActivity() {
     };
   }, [job, client]);
 
+  // Keep one subscription attempt per active run; a failed stream leaves polling in charge.
   useEffect(() => {
     if (!runId || !active) return;
     const controller = new AbortController();
@@ -223,6 +227,8 @@ export function BackgroundActivity() {
       ? errorMessage(run.errorCode ?? "RUN_FAILED", "推荐未完成，请重试。")
       : "");
   const target = saved ? `/decision-runs/${job?.runId ?? runId}` : "/discover";
+  const completed = run?.status === "completed" && !pending && !error && (!job || job.status === "saved");
+  if (pathname === target && completed) return null;
   const title = submitting
     ? job.kind === "choice"
       ? "正在保存选择…"
@@ -245,7 +251,7 @@ export function BackgroundActivity() {
                   ? "推荐已完成"
                   : "正在读取任务状态…";
   return (
-    <aside className="background-activity" aria-label="选餐任务">
+    <aside className={cn("background-activity", { "activity-compact": completed })} aria-label="选餐任务">
       <div className="activity-heading" role="status">
         {pending ? (
           <LoaderCircle size={18} className="spin" />
