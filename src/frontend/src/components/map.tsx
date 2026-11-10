@@ -32,7 +32,11 @@ export function FoodMap({
     loadMap()
       .then((amap) => {
         if (!active || !element.current) return;
-        const map = new amap.Map(element.current, { zoom: 15, viewMode: "2D" });
+        const map = new amap.Map(element.current, {
+          zoom: 15,
+          viewMode: "2D",
+          animateEnable: false,
+        });
         instance.current = map;
         map.on("click", (e) =>
           handlers.current.onPick?.({
@@ -43,7 +47,7 @@ export function FoodMap({
         setReady(true);
       })
       .catch(
-        () => active && setError("500 Error：地图加载失败"),
+        () => active && setError("地图加载失败，请稍后重试"),
       );
     return () => {
       active = false;
@@ -66,7 +70,6 @@ export function FoodMap({
               title: "出发位置",
             }),
           );
-          map.setCenter([origin.longitude, origin.latitude]);
         }
         for (const place of places) {
           const marker = new amap.Marker({
@@ -79,12 +82,13 @@ export function FoodMap({
         }
         const chosen = places.find((p) => p.id === selected);
         map.add(objects);
-        if (places.length) map.setFitView();
         if (chosen)
-          map.setCenter([chosen.location.longitude, chosen.location.latitude]);
+          map.setCenter([chosen.location.longitude, chosen.location.latitude], true);
+        else if (places.length) map.setFitView(undefined, true);
+        else if (origin) map.setCenter([origin.longitude, origin.latitude], true);
       })
       .catch(() => {
-        if (active) setError("500 Error：地图加载失败");
+        if (active) setError("地图加载失败，请稍后重试");
       });
     return () => {
       active = false;

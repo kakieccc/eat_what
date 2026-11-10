@@ -1,7 +1,7 @@
 import { ToggleGroup } from "radix-ui";
+import { Check } from "lucide-react";
 import { radiusValues, type SearchRadius } from "../lib/schemas";
 import { formatDistance } from "../lib/utils";
-import { BrandMark } from "./brand";
 
 export function RadiusOptions({
   value,
@@ -29,7 +29,7 @@ export function RadiusOptions({
     >
       {radiusValues.map((radius) => (
         <ToggleGroup.Item key={radius} value={String(radius)}>
-          {value === radius && <BrandMark />}
+          {value === radius && <Check aria-hidden="true" />}
           {formatDistance(radius)}
         </ToggleGroup.Item>
       ))}

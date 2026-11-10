@@ -4,6 +4,12 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function returnPath(state: unknown): string {
+  const from = state && typeof state === "object" && "from" in state ? state.from : null;
+  return typeof from === "string" && from.startsWith("/") && !from.startsWith("//")
+    && !/^\/(login|register|error)([/?#]|$)/.test(from) ? from : "/";
+}
+
 export function formatDistance(meters: number): string {
   return meters < 1000
     ? `${Math.round(meters)} 米`
@@ -13,7 +19,7 @@ export function formatDistance(meters: number): string {
 export function formatBudget({ min, max }: { min: string | null; max: string | null }): string {
   if (min && max) return `人均 ¥${min}–${max}`;
   if (max) return `人均 ¥${max}以内`;
-  if (min) return `人均 ¥${min}起`;
+  if (min && Number(min) > 0) return `人均 ¥${min}起`;
   return "预算不限";
 }
 

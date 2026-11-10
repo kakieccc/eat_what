@@ -3,15 +3,11 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { useAuth } from "../lib/auth";
 import { Brand, PageHero } from "../components/brand";
-
-function returnPath(state: unknown): string {
-  const from = state && typeof state === "object" && "from" in state
-    ? (state as { from: unknown }).from : null;
-  return typeof from === "string" && from.startsWith("/") && !from.startsWith("//")
-    && !/^\/(login|register)([/?#]|$)/.test(from) ? from : "/";
-}
+import { useDesktop } from "../lib/use-desktop";
+import { returnPath } from "../lib/utils";
 
 export function AuthPage({ mode }: { mode: "login" | "register" }) {
+  const desktop = useDesktop();
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,12 +37,19 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
   };
   if (auth.state === "authenticated")
     return <Navigate to={destination} replace />;
-  return <section className="auth-page">
-    <PageHero className="auth-hero">
+  return <section className={desktop ? "desktop-auth-page" : "auth-page"}>
+    {desktop ? <aside className="desktop-auth-intro">
+      <Brand />
+      <div><h2>这一餐，<br />有个好选择。</h2><p>从附近出发，找到合心意的一家。</p></div>
+    </aside> : <PageHero className="auth-hero">
       <Brand />
       <h1>{mode === "register" ? "创建账号" : "欢迎回来"}</h1>
-    </PageHero>
+    </PageHero>}
     <section className="auth-card">
+      {desktop && <header><h1>{mode === "register" ? "创建账号" : "欢迎回来"}</h1><p>{mode === "register" ? "留下你的用餐偏好，下次选餐更轻松。" : "登录后，继续选择合心意的一餐。"}</p></header>}
+      {mode === "login" && new URLSearchParams(location.search).get("passwordChanged") === "1" && (
+        <p className="auth-notice" role="status">密码已修改，请使用新密码重新登录。</p>
+      )}
       <form onSubmit={submit}>
         <label className="field-label">用户名
           <input required minLength={3} maxLength={32} pattern="[A-Za-z0-9_]+"

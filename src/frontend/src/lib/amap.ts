@@ -1,6 +1,6 @@
 import AMapLoader from "@amap/amap-jsapi-loader";
-import { config, configError } from "./api";
-import type { Origin } from "./schemas";
+import { config, configError, request } from "./api";
+import { originSchema, type Origin, type Point } from "./schemas";
 export interface LngLat {
   getLat(): number;
   getLng(): number;
@@ -10,8 +10,8 @@ export interface MapInstance {
   on(event: string, fn: (event: { lnglat: LngLat }) => void): void;
   add(objects: unknown[]): void;
   remove(objects: unknown[]): void;
-  setCenter(point: [number, number]): void;
-  setFitView(): void;
+  setCenter(point: [number, number], immediately?: boolean): void;
+  setFitView(overlays?: unknown[], immediately?: boolean): void;
 }
 export interface MarkerInstance {
   on(event: string, fn: () => void): void;
@@ -44,7 +44,7 @@ export function loadMap(): Promise<AmapAPI> {
   }
   return promise;
 }
-export async function locate(): Promise<Omit<Origin, "address">> {
+export async function locate(signal?: AbortSignal): Promise<Point> {
   const gps = await new Promise<GeolocationPosition>((resolve, reject) =>
     navigator.geolocation.getCurrentPosition(
       resolve,
@@ -52,7 +52,9 @@ export async function locate(): Promise<Omit<Origin, "address">> {
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     ),
   );
+  signal?.throwIfAborted();
   const amap = await loadMap();
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) =>
     amap.convertFrom(
       [gps.coords.longitude, gps.coords.latitude],
@@ -68,4 +70,11 @@ export async function locate(): Promise<Omit<Origin, "address">> {
       },
     ),
   );
+}
+
+export async function resolveLocation(point: Point, signal?: AbortSignal): Promise<Origin> {
+  const query = new URLSearchParams({
+    latitude: String(point.latitude), longitude: String(point.longitude),
+  });
+  return request(`/resolved-locations?${query}`, undefined, "GET", undefined, signal, originSchema);
 }

@@ -1,27 +1,35 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { SlidersHorizontal, ChevronRight } from "lucide-react";
-import { BrandArcs, BrandMark } from "./brand";
-import { cn } from "../lib/utils";
+import { Check, SlidersHorizontal, ChevronRight, ChevronDown } from "lucide-react";
+import { cn, formatBudget, formatDistance } from "../lib/utils";
+import { useDesktop } from "../lib/use-desktop";
+import { DesktopPageHeader } from "./desktop-page-header";
+import { PageHero } from "./brand";
 import {
   preferencesSchema,
   cuisines,
-  excludedCuisineOptions,
+  tasteOptions,
+  integerBudget,
   allowedFoodLimit,
   type Preferences,
-  type AccountPreferences,
-  type LearnableField,
 } from "../lib/schemas";
 import { RadiusOptions } from "./radius-options";
+import { BudgetRange } from "./budget-range";
 import { Button } from "./ui/button";
 import {
   Sheet,
   SheetContent,
-  SheetHeader,
   SheetTitle,
   SheetTrigger,
 } from "./ui/sheet";
+
+type FoodField = "allowedFoods" | "excludedFoods";
+
+function foodNames(text: string): string[] {
+  return text.split(/[,，]/).map((value) => value.trim()).filter(Boolean);
+}
+
 export function PreferencesForm({
   initial,
   onSubmit,
@@ -29,7 +37,7 @@ export function PreferencesForm({
   label,
   busy = false,
   personal = false,
-  memory,
+  headingAction,
   children,
 }: {
   initial: Preferences;
@@ -38,22 +46,23 @@ export function PreferencesForm({
   label: string;
   busy?: boolean;
   personal?: boolean;
+  headingAction?: ReactNode;
   children?: ReactNode;
-  memory?: {
-    sources: AccountPreferences["sources"];
-    overrides: AccountPreferences["overrides"];
-    automatic: LearnableField[];
-    onRestore: (field: LearnableField) => void;
-  };
 }) {
+  const desktop = useDesktop();
   const [advanced, setAdvanced] = useState(false);
-  const [foodInputs, setFoodInputs] = useState(() => ({
-    allowedFoods: initial.allowedFoods.join("，"),
-    excludedFoods: initial.excludedFoods.filter((value) => !excludedCuisineOptions.includes(value)).join("，"),
+  const [allowedInput, setAllowedInput] = useState(initial.allowedFoods.join("，"));
+  const [otherFoods, setOtherFoods] = useState(() => ({
+    allowedFoods: initial.allowedFoods.filter((value) => !cuisines.includes(value)).join("，"),
+    excludedFoods: initial.excludedFoods.filter((value) => !cuisines.includes(value)).join("，"),
   }));
-  const [showOtherCuisine, setShowOtherCuisine] = useState(() =>
-    initial.excludedFoods.some((value) => !excludedCuisineOptions.includes(value)),
+  const [showOtherCuisine, setShowOtherCuisine] = useState({
+    allowedFoods: !!otherFoods.allowedFoods, excludedFoods: !!otherFoods.excludedFoods,
+  });
+  const [otherTaste, setOtherTaste] = useState(() =>
+    initial.requestText.split("；").filter((value) => value && !tasteOptions.includes(value)).join("；"),
   );
+  const [showOtherTaste, setShowOtherTaste] = useState(!!otherTaste);
   const {
     control,
     register,
@@ -66,7 +75,13 @@ export function PreferencesForm({
     formState: { errors, isSubmitting },
   } = useForm<Preferences, unknown, Preferences>({
     resolver: zodResolver(preferencesSchema),
-    defaultValues: initial,
+    defaultValues: {
+      ...initial,
+      budgetPerPerson: {
+        min: integerBudget(initial.budgetPerPerson.min || "0"),
+        max: initial.budgetPerPerson.max ? integerBudget(initial.budgetPerPerson.max) : null,
+      },
+    },
   });
   useEffect(() => {
     if (!onDraftChange) return;
@@ -77,118 +92,221 @@ export function PreferencesForm({
   }, [subscribe, onDraftChange]);
   const radius = watch("radiusMeters"),
     chosen = watch("allowedFoods"),
-    excluded = watch("excludedFoods");
-  const setFoodInput = (field: keyof typeof foodInputs, text: string) => {
-    setFoodInputs((current) => ({ ...current, [field]: text }));
-    const names = text.split(/[,，]/).map((value) => value.trim()).filter(Boolean);
-    setValue(
-      field,
-      field === "excludedFoods"
-        ? [...new Set([...watch("excludedFoods").filter((value) => excludedCuisineOptions.includes(value)), ...names])]
-        : names,
-      { shouldValidate: true, shouldDirty: true },
-    );
+    requestText = watch("requestText");
+  const disabled = busy || isSubmitting;
+  const updateFoods = (field: FoodField, values: string[]) => {
+    setValue(field, values, { shouldValidate: true, shouldDirty: true });
+    if (field === "allowedFoods") setAllowedInput(values.join("，"));
   };
-  const toggleAllowed = (item: string) => {
-    const current = watch("allowedFoods");
-    setFoodInput(
-      "allowedFoods",
-      (current.includes(item)
-        ? current.filter((c) => c !== item)
-        : [...current, item]).join("，"),
-    );
+  const setAllowedText = (text: string) => {
+    const names = foodNames(text);
+    const custom = names.filter((value) => !cuisines.includes(value)).join("，");
+    setValue("allowedFoods", names, { shouldValidate: true, shouldDirty: true });
+    setAllowedInput(text);
+    setOtherFoods((current) => ({ ...current, allowedFoods: custom }));
+    if (custom) setShowOtherCuisine((current) => ({ ...current, allowedFoods: true }));
   };
-  const toggleExcludedCuisine = (item: string) => {
-    const current = watch("excludedFoods");
-    const removing = current.includes(item);
-    setValue("excludedFoods", removing ? current.filter((value) => value !== item) : [...current, item],
-      { shouldValidate: true, shouldDirty: true });
-    if (removing) setFoodInputs((inputs) => ({ ...inputs,
-      excludedFoods: inputs.excludedFoods.split(/[,，]/).filter((value) => value.trim() !== item).join("，"),
+  const toggleFood = (field: FoodField, item: string) => {
+    const current = watch(field);
+    updateFoods(field, current.includes(item) ? current.filter((value) => value !== item) : [...current, item]);
+    if (current.includes(item)) setOtherFoods((inputs) => ({
+      ...inputs, [field]: foodNames(inputs[field]).filter((value) => value !== item).join("，"),
     }));
   };
-  const toggleOtherCuisine = () => {
-    if (showOtherCuisine) {
-      setFoodInputs((inputs) => ({ ...inputs, excludedFoods: "" }));
-      setValue("excludedFoods", watch("excludedFoods").filter((value) => excludedCuisineOptions.includes(value)),
-        { shouldValidate: true, shouldDirty: true });
+  const toggleOtherCuisine = (field: FoodField) => {
+    if (showOtherCuisine[field]) {
+      setOtherFoods((current) => ({ ...current, [field]: "" }));
+      updateFoods(field, watch(field).filter((value) => cuisines.includes(value)));
     }
-    setShowOtherCuisine((visible) => !visible);
+    setShowOtherCuisine((current) => ({ ...current, [field]: !current[field] }));
   };
-  const sourceNote = (field: LearnableField) => memory && (
-    <span className="preference-source">
-      <span>{memory.automatic.includes(field) ? "保存后恢复自动学习" :
-        ({ manual: "手动固定", learned: "长期记忆", builtin: "系统默认" })[memory.sources[field]]}</span>
-      {Object.hasOwn(memory.overrides, field) && (
-        <button type="button" className="text-button" disabled={busy || isSubmitting}
-          aria-label={`${({ budgetPerPerson: "预算", radiusMeters: "距离", requestText: "补充说明" })[field]}${memory.automatic.includes(field) ? "取消恢复" : "恢复自动学习"}`}
-          onClick={() => memory.onRestore(field)}>
-          {memory.automatic.includes(field) ? "取消恢复" : "恢复自动学习"}
-        </button>
-      )}
-    </span>
-  );
+  const cuisineOptions = (field: FoodField) => {
+    const selected = watch(field);
+    const limit = field === "allowedFoods" ? allowedFoodLimit : 12;
+    return <>
+      <div className="chips">
+        <button type="button" aria-pressed={!selected.length} disabled={disabled} onClick={() => {
+          updateFoods(field, []);
+          setOtherFoods((current) => ({ ...current, [field]: "" }));
+          setShowOtherCuisine((current) => ({ ...current, [field]: false }));
+        }}>不限</button>
+        {cuisines.map((cuisine) => <button type="button" key={cuisine}
+          aria-pressed={selected.includes(cuisine)}
+          disabled={disabled || (selected.length >= limit && !selected.includes(cuisine))}
+          onClick={() => toggleFood(field, cuisine)}>
+          {selected.includes(cuisine) && <Check aria-hidden="true" />}{cuisine}
+        </button>)}
+        <button type="button" aria-pressed={showOtherCuisine[field]}
+          disabled={disabled || (selected.length >= limit && !showOtherCuisine[field])}
+          onClick={() => toggleOtherCuisine(field)}>其他</button>
+      </div>
+      {showOtherCuisine[field] && <label className="field-label other-condition">
+        {field === "allowedFoods" ? "其他限定类型" : "其他不想吃的菜系"}
+        <input aria-label={field === "allowedFoods" ? "其他限定类型" : "其他不想吃的菜系"}
+          disabled={disabled} value={otherFoods[field]} placeholder="输入菜系或菜品，用逗号分隔"
+          onChange={(event) => {
+            const text = event.target.value;
+            setOtherFoods((current) => ({ ...current, [field]: text }));
+            updateFoods(field, [...new Set([
+              ...watch(field).filter((value) => cuisines.includes(value)), ...foodNames(text),
+            ])]);
+          }} />
+      </label>}
+    </>;
+  };
   const foodInput = (
     <label className="food-input">
       <span className="sr-only">限定食物类型</span>
       <input
         aria-label="限定食物类型"
-        value={foodInputs.allowedFoods}
+        value={allowedInput}
         placeholder="填写菜系或菜品"
         aria-describedby="food-limit"
         aria-invalid={!!errors.allowedFoods}
-        onChange={(event) => setFoodInput("allowedFoods", event.target.value)}
+        onChange={(event) => setAllowedText(event.target.value)}
       />
     </label>
   );
   const foodSection = (
-    <section className={cn("food-section", { "page-hero": !personal })}>
-      {!personal && <><BrandArcs /><h1>想吃什么？</h1></>}
+    <section className="food-section">
       <fieldset>
-        <legend className={personal ? undefined : "sr-only"}>限定食物类型 <span>任选其一</span></legend>
+        <legend className={personal || desktop ? undefined : "sr-only"}>
+          限定食物类型 {desktop ? <span>最多选择 {allowedFoodLimit} 项</span> : !personal && <span>任选其一</span>}
+        </legend>
         <div className="food-controls">
-          {!personal && foodInput}
-          <div className="chips">
-            <button type="button" aria-pressed={!chosen.length} onClick={() => setFoodInput("allowedFoods", "")}>
-              {!chosen.length && <BrandMark />}不限
+          {personal || desktop ? cuisineOptions("allowedFoods") : <>
+            {foodInput}
+            <div className="chips">
+            <button type="button" aria-pressed={!chosen.length} onClick={() => setAllowedText("")}>
+              {!chosen.length && <Check aria-hidden="true" />}不限
             </button>
-            {(personal ? cuisines.slice(0, 3) : ["家常菜", "面食", "火锅", "日料", "轻食"]).map((c) => (
+            {cuisines.slice(0, 5).map((c) => (
               <button
                 type="button"
                 key={c}
                 aria-pressed={chosen.includes(c)}
                 disabled={chosen.length >= allowedFoodLimit && !chosen.includes(c)}
-                onClick={() => toggleAllowed(c)}
+                onClick={() => toggleFood("allowedFoods", c)}
               >
-                {chosen.includes(c) && <BrandMark />}{c}
+                {chosen.includes(c) && <Check aria-hidden="true" />}{c}
               </button>
             ))}
           </div>
-          {personal && foodInput}
-          <p id="food-limit" className={cn("muted", "food-limit", { "sr-only": !personal })}>最多 {allowedFoodLimit} 项，用逗号分隔。</p>
+          </>}
+          <p id="food-limit" className={cn("muted", "food-limit", { "sr-only": !personal || desktop })}>最多选择 {allowedFoodLimit} 项。</p>
           {errors.allowedFoods && <p className="error" role="alert">{errors.allowedFoods.message}</p>}
         </div>
       </fieldset>
     </section>
   );
+  const advancedFields = (
+    <div className="sheet-fields">
+      {!personal && !desktop && <fieldset data-invalid={!!errors.allowedFoods || undefined}>
+        <legend>更多限定类型</legend>
+        {cuisineOptions("allowedFoods")}
+        {errors.allowedFoods && <p className="error" role="alert">{errors.allowedFoods.message}</p>}
+      </fieldset>}
+      {!personal && (
+        <>
+          <label className="field-label">
+            用餐人数
+            <Controller
+              name="partySize"
+              control={control}
+              render={({ field }) => (
+                <input
+                  {...field}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={Number.isNaN(field.value) ? "" : field.value}
+                  onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                />
+              )}
+            />
+          </label>
+          <label className="field-label">
+            餐段
+            <select {...register("mealPeriod")}>
+              <option value="breakfast">早餐</option>
+              <option value="lunch">午餐</option>
+              <option value="dinner">晚餐</option>
+              <option value="lateNight">夜宵</option>
+            </select>
+          </label>
+          {errors.partySize && (
+            <p className="error" role="alert">{errors.partySize.message}</p>
+          )}
+          {errors.mealPeriod && (
+            <p className="error" role="alert">{errors.mealPeriod.message}</p>
+          )}
+        </>
+      )}
+      <fieldset className="taste-section">
+        <legend>口味与场景</legend>
+        <div className="chips">
+          {tasteOptions.map((tag) => (
+            <button
+              type="button"
+              key={tag}
+              aria-pressed={requestText.split("；").includes(tag)}
+              disabled={disabled}
+              onClick={() => {
+                const current = requestText.split("；").filter(Boolean);
+                setValue("requestText", (current.includes(tag) ? current.filter((value) => value !== tag) : [...current, tag]).join("；"),
+                  { shouldDirty: true, shouldValidate: true });
+              }}
+            >
+              {tag}
+            </button>
+          ))}
+          <button type="button" aria-pressed={showOtherTaste}
+            disabled={disabled}
+            onClick={() => {
+              if (showOtherTaste) {
+                setOtherTaste("");
+                setValue("requestText", requestText.split("；").filter((value) => tasteOptions.includes(value)).join("；"),
+                  { shouldDirty: true, shouldValidate: true });
+              }
+              setShowOtherTaste((visible) => !visible);
+            }}>其他</button>
+        </div>
+        {showOtherTaste && <label className="field-label other-condition">
+          其他口味与场景
+          <input aria-label="其他口味与场景" value={otherTaste} maxLength={1000}
+            disabled={disabled}
+            placeholder="填写其他口味或用餐场景"
+            onChange={(event) => {
+              const text = event.target.value;
+              setOtherTaste(text);
+              setValue("requestText", [
+                ...requestText.split("；").filter((value) => tasteOptions.includes(value)), text,
+              ].filter(Boolean).join("；"), { shouldDirty: true, shouldValidate: true });
+            }} />
+        </label>}
+        {errors.requestText && <p className="error" role="alert">{errors.requestText.message}</p>}
+      </fieldset>
+      <fieldset className="excluded-foods-section" data-invalid={!!errors.excludedFoods || undefined}>
+        <legend>不想吃的菜系</legend>
+        {cuisineOptions("excludedFoods")}
+        {errors.excludedFoods && <p className="error" role="alert">{errors.excludedFoods.message}</p>}
+      </fieldset>
+    </div>
+  );
+  const submitButton = <Button type="submit" disabled={disabled} className="primary-full">
+    {disabled ? "正在处理…" : label}
+  </Button>;
   return (
     <form
       onChange={() => clearErrors("root")}
       onSubmit={handleSubmit(async (value) => {
         clearErrors();
         try {
+          const budget = { ...value.budgetPerPerson, min: value.budgetPerPerson.min ?? "0" };
+          setValue("budgetPerPerson", budget);
           await onSubmit({
             ...value,
-            budgetPerPerson: {
-              min:
-                value.budgetPerPerson.min === ""
-                  ? null
-                  : value.budgetPerPerson.min,
-              max:
-                value.budgetPerPerson.max === ""
-                  ? null
-                  : value.budgetPerPerson.max,
-            },
+            budgetPerPerson: budget,
           });
         } catch (error) {
           setError("root", {
@@ -198,217 +316,117 @@ export function PreferencesForm({
       })}
       className={cn("preference-form", personal ? "personal-preferences" : "home-preferences")}
     >
-      {!personal && foodSection}
-      <fieldset className="budget-section">
-        <legend>
-          人均预算 <span>元 / 人</span>
-        </legend>
-        <div className="budget-inputs">
-          <label className="budget-field" htmlFor="budget-min">
-            <span className="sr-only">最低预算</span>
-            <input
-              disabled={memory?.automatic.includes("budgetPerPerson")}
-              id="budget-min"
-              inputMode="decimal"
-              placeholder="不限"
-              aria-invalid={!!(errors.budgetPerPerson?.min || errors.budgetPerPerson?.message)}
-              {...register("budgetPerPerson.min")}
-            />
-            {!personal && <span className="budget-caption" aria-hidden="true">最低</span>}
-          </label>
-          <span>—</span>
-          <label className="budget-field" htmlFor="budget-max">
-            <span className="sr-only">最高预算</span>
-            <input
-              disabled={memory?.automatic.includes("budgetPerPerson")}
-              id="budget-max"
-              inputMode="decimal"
-              placeholder="不限"
-              aria-invalid={!!(errors.budgetPerPerson?.max || errors.budgetPerPerson?.message)}
-              {...register("budgetPerPerson.max")}
-            />
-            {!personal && <span className="budget-caption" aria-hidden="true">最高</span>}
-          </label>
-        </div>
-        {sourceNote("budgetPerPerson")}
-        {(errors.budgetPerPerson?.min ||
-          errors.budgetPerPerson?.max ||
-          errors.budgetPerPerson?.message) && (
-          <p className="error" role="alert">
-            {errors.budgetPerPerson?.min?.message ||
-              errors.budgetPerPerson?.max?.message ||
-              errors.budgetPerPerson?.message}
-          </p>
-        )}
-      </fieldset>
-      <fieldset data-invalid={!!errors.radiusMeters || undefined}>
-        <legend className="field-heading">搜索半径{sourceNote("radiusMeters")}</legend>
-        <RadiusOptions
-          value={radius}
-          onChange={(value) =>
-            setValue("radiusMeters", value, {
-              shouldValidate: true,
-              shouldDirty: true,
-            })
-          }
-          disabled={busy || isSubmitting || memory?.automatic.includes("radiusMeters")}
-          invalid={!!errors.radiusMeters}
-        />
-        {errors.radiusMeters && (
-          <p className="error" role="alert">
-            {errors.radiusMeters.message}
-          </p>
-        )}
-      </fieldset>
-      {personal && foodSection}
-      <div className="note-section">
-        <div className="field-heading">
-          <label className="field-label" htmlFor="request-text">
-            {personal ? "默认补充说明" : "补充说明"} {!personal && <span>可选</span>}
-          </label>
-          {sourceNote("requestText")}
-        </div>
-        <textarea
-          id="request-text"
-          disabled={memory?.automatic.includes("requestText")}
-          placeholder="想吃热乎的，今天不太想吃面…"
-          rows={2}
-          aria-invalid={!!errors.requestText}
-          maxLength={1000}
-          {...register("requestText")}
-        />
-        {errors.requestText && <p className="error" role="alert">{errors.requestText.message}</p>}
-      </div>
-      <Sheet open={advanced} onOpenChange={setAdvanced}>
-        <SheetTrigger asChild>
-          <Button type="button" variant="ghost" className="advanced">
-            <SlidersHorizontal size={16} />
-            {personal ? "更多偏好 · 口味与不想吃的菜系" : "更多条件"}
-            <ChevronRight />
-          </Button>
-        </SheetTrigger>
-        <SheetContent side="bottom" className="advanced-sheet" aria-describedby={undefined}>
-          <SheetHeader>
-            <SheetTitle>把这一餐，说得更具体</SheetTitle>
-          </SheetHeader>
-          <div className="sheet-fields">
-            <fieldset data-invalid={!!errors.excludedFoods || undefined}>
-              <legend>不想吃的菜系</legend>
-              <div className="cuisine-options">
-                {excludedCuisineOptions.map((cuisine) => (
-                  <label key={cuisine}>
-                    <input type="checkbox" checked={excluded.includes(cuisine)}
-                      disabled={busy || isSubmitting || (excluded.length >= 12 && !excluded.includes(cuisine))}
-                      onChange={() => toggleExcludedCuisine(cuisine)} />
-                    {cuisine}
-                  </label>
-                ))}
-                <label>
-                  <input type="checkbox" checked={showOtherCuisine}
-                    disabled={busy || isSubmitting || (excluded.length >= 12 && !showOtherCuisine)}
-                    onChange={toggleOtherCuisine} />
-                  其他菜系
-                </label>
-              </div>
-              {showOtherCuisine && (
-                <label className="field-label">
-                  其他不想吃的菜系
-                  <input aria-label="其他不想吃的菜系" autoFocus
-                    value={foodInputs.excludedFoods}
-                    placeholder="输入菜系名称，用逗号分隔"
-                    onChange={(event) => setFoodInput("excludedFoods", event.target.value)} />
-                </label>
-              )}
-              {errors.excludedFoods && (
-                <span className="error" role="alert">{errors.excludedFoods.message}</span>
+      {desktop && !personal && <DesktopPageHeader title="想吃什么？" description="从附近出发，选一顿合心意的。" />}
+      {!desktop && !personal && <PageHero className="home-header">
+        <h1>想吃什么？</h1>{headingAction}
+      </PageHero>}
+      <div className={desktop ? "desktop-meal-layout" : "mobile-form-layout"}>
+        <div className={desktop ? "desktop-form-fields" : "mobile-form-fields"}>
+          {!personal && foodSection}
+          <div className="financial-fields">
+            <fieldset className="budget-section">
+              <legend>
+                人均预算 <span>元 / 人</span>
+              </legend>
+              <Controller name="budgetPerPerson" control={control} render={({ field }) => (
+                <BudgetRange value={field.value} onChange={field.onChange}
+                  disabled={disabled}
+                  invalid={!!errors.budgetPerPerson} />
+              )} />
+              {(errors.budgetPerPerson?.min ||
+                errors.budgetPerPerson?.max ||
+                errors.budgetPerPerson?.message) && (
+                <p className="error" role="alert">
+                  {errors.budgetPerPerson?.min?.message ||
+                    errors.budgetPerPerson?.max?.message ||
+                    errors.budgetPerPerson?.message}
+                </p>
               )}
             </fieldset>
-            {!personal && (
-              <>
-                <label className="field-label">
-                  用餐人数
-                  <Controller
-                    name="partySize"
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        {...field}
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={Number.isNaN(field.value) ? "" : field.value}
-                        onChange={(event) => field.onChange(event.target.valueAsNumber)}
-                      />
-                    )}
-                  />
-                </label>
-                <label className="field-label">
-                  餐段
-                  <select {...register("mealPeriod")}>
-                    <option value="breakfast">早餐</option>
-                    <option value="lunch">午餐</option>
-                    <option value="dinner">晚餐</option>
-                    <option value="lateNight">夜宵</option>
-                  </select>
-                </label>
-                {errors.partySize && (
-                  <p className="error" role="alert">{errors.partySize.message}</p>
-                )}
-                {errors.mealPeriod && (
-                  <p className="error" role="alert">{errors.mealPeriod.message}</p>
-                )}
-              </>
-            )}
-            <fieldset>
-              <legend>口味与场景</legend>
-              <div className="chips">
-                {["适合一人食", "适合聊天", "热乎"].map((tag) => (
-                  <button
-                    type="button"
-                    key={tag}
-                    onClick={() => setValue("requestText", [watch("requestText"), tag].filter(Boolean).join("；"), { shouldDirty: true, shouldValidate: true })}
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend>更多限定类型</legend>
-              <div className="chips">
-                {cuisines.map((c) => (
-                  <button
-                    type="button"
-                    key={c}
-                    aria-pressed={chosen.includes(c)}
-                    onClick={() => toggleAllowed(c)}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
+            <fieldset data-invalid={!!errors.radiusMeters || undefined}>
+              <legend className="field-heading">搜索半径</legend>
+              <RadiusOptions
+                value={radius}
+                onChange={(value) =>
+                  setValue("radiusMeters", value, {
+                    shouldValidate: true,
+                    shouldDirty: true,
+                  })
+                }
+                disabled={disabled}
+                invalid={!!errors.radiusMeters}
+              />
+              {errors.radiusMeters && (
+                <p className="error" role="alert">
+                  {errors.radiusMeters.message}
+                </p>
+              )}
             </fieldset>
           </div>
-        </SheetContent>
-      </Sheet>
-      {errors.root && (
-        <p className="error" role="alert">
-          {errors.root.message}
-        </p>
-      )}
-      {Object.keys(errors).some((field) => field !== "root") && (
-        <p className="error" role="alert">
-          请检查表单中的错误提示后再提交。
-        </p>
-      )}
-      {children}
-      <Button
-        type="submit"
-        disabled={busy || isSubmitting}
-        className="primary-full"
-      >
-        {busy || isSubmitting ? "正在处理…" : label}
-      </Button>
+          {personal && foodSection}
+          <div className="note-section">
+            <div className="field-heading">
+              <label className="field-label" htmlFor="request-text">
+                {personal ? "默认补充说明" : "补充说明"} {!personal && <span>可选</span>}
+              </label>
+            </div>
+            <textarea
+              id="request-text"
+              placeholder="想吃热乎的，今天不太想吃面…"
+              rows={2}
+              aria-invalid={!!errors.requestText}
+              maxLength={1000}
+              {...register("requestText", { onChange: (event) => {
+                const custom = (event.target.value as string).split("；")
+                  .filter((value) => value && !tasteOptions.includes(value)).join("；");
+                setOtherTaste(custom);
+                if (custom) setShowOtherTaste(true);
+              } })}
+            />
+            {errors.requestText && <p className="error" role="alert">{errors.requestText.message}</p>}
+          </div>
+          {desktop && personal ? advancedFields : desktop ? <details className="desktop-advanced">
+            <summary><SlidersHorizontal size={17} />{personal ? "更多偏好 · 口味与不想吃的菜系" : "更多条件"}<ChevronDown size={17} /></summary>
+            {advancedFields}
+          </details> : <Sheet open={advanced} onOpenChange={setAdvanced}>
+            <SheetTrigger asChild>
+              <Button type="button" variant="ghost" className="advanced">
+                <SlidersHorizontal size={16} />
+                {personal ? "更多偏好 · 口味与不想吃的菜系" : "更多条件"}
+                <ChevronRight />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="bottom" className="advanced-sheet" aria-describedby={undefined}>
+              <SheetTitle className="sr-only">补充条件</SheetTitle>
+              {advancedFields}
+            </SheetContent>
+          </Sheet>}
+          {errors.root && (
+            <p className="error" role="alert">
+              {errors.root.message}
+            </p>
+          )}
+          {Object.keys(errors).some((field) => field !== "root") && (
+            <p className="error" role="alert">
+              请检查表单中的错误提示后再提交。
+            </p>
+          )}
+          {children}
+          {desktop && personal && submitButton}
+        </div>
+        {desktop && !personal && <aside className="meal-summary" aria-label="本次选餐">
+          <h2>本次选餐</h2>
+          <div className="meal-origin">{headingAction}</div>
+          <dl>
+            <div><dt>食物类型</dt><dd>{chosen.length ? chosen.join("、") : "不限"}</dd></div>
+            <div><dt>人均预算</dt><dd>{formatBudget(watch("budgetPerPerson")).replace("人均 ", "")}</dd></div>
+            <div><dt>搜索范围</dt><dd>{formatDistance(radius)} 内</dd></div>
+            <div><dt>用餐安排</dt><dd>{({ breakfast: "早餐", lunch: "午餐", dinner: "晚餐", lateNight: "夜宵" })[watch("mealPeriod")]} · {watch("partySize")} 人</dd></div>
+          </dl>
+          {submitButton}
+        </aside>}
+      </div>
+      {!desktop && submitButton}
     </form>
   );
 }

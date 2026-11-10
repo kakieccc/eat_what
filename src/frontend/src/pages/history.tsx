@@ -6,19 +6,24 @@ import {
 } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, ChevronRight, ClipboardList, MapPin } from "lucide-react";
 import { PageHero } from "../components/brand";
+import { DesktopPageHeader } from "../components/desktop-page-header";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
+import { PlaceFacts } from "../components/place-facts";
 import { ApiError, request } from "../lib/api";
 import { isDiscardedRun, useMealBusy } from "../lib/recommendations";
 import { useDraft } from "../lib/store";
+import { useDesktop } from "../lib/use-desktop";
 import {
   fromDecisionRequest,
   historySchema,
   runSchema,
+  type DecisionRequest,
 } from "../lib/schemas";
 import { formatDistance } from "../lib/utils";
 import { useParams } from "react-router-dom";
 export function History() {
+  const desktop = useDesktop();
   const navigate = useNavigate(),
     draft = useDraft();
   const busy = useMealBusy();
@@ -35,9 +40,15 @@ export function History() {
     retry: false,
   });
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
+  const repeatMeal = (request: DecisionRequest) => {
+    draft.initialize({ ...fromDecisionRequest(request), requestText: "" }, "history", null);
+    draft.setRunId(null);
+    draft.setOrigin(null);
+    navigate("/map");
+  };
   return (
     <>
-      <PageHero className="history-hero"><h1>用餐历史</h1></PageHero>
+      {desktop ? <DesktopPageHeader title="用餐历史" description="回看每一次选择，也可以按相似条件再选一餐。" /> : <PageHero className="history-hero"><h1>用餐历史</h1></PageHero>}
       {busy && <p role="status">当前任务尚未完成或待确认，可以继续查看历史。</p>}
       {query.isPending ? (
         <p>正在读取历史…</p>
@@ -54,6 +65,23 @@ export function History() {
           <h2>还没有用餐记录</h2>
           <Button onClick={() => navigate("/")}>去选今天的第一餐</Button>
         </section>
+      ) : desktop ? (
+        <div className="desktop-history">
+          <table>
+            <caption className="sr-only">用餐记录</caption>
+            <thead><tr><th scope="col">用餐时间</th><th scope="col">餐厅</th><th scope="col">菜系 / 距离</th><th scope="col">参考人均</th><th scope="col">操作</th></tr></thead>
+            <tbody>{items.map((item) => <tr key={item.id}>
+              <td><time dateTime={item.createdAt}>{new Date(item.createdAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}</time></td>
+              <td><Link className="history-place-link" to={`/decision-runs/${item.choice.decisionRunId}?place=${item.choice.place.id}`}>
+                {item.choice.place.name}<ChevronRight size={16} />
+              </Link></td>
+              <td>{item.choice.place.cuisineTypes.join(" · ")}<span className="history-distance">直线 {formatDistance(item.choice.place.straightLineDistanceMeters)}</span></td>
+              <td>{item.choice.place.averageCost === null ? "暂无数据" : `¥${item.choice.place.averageCost}`}</td>
+              <td><button className="text-button" disabled={busy} onClick={() => repeatMeal(item.request)}>按类似条件再选</button></td>
+            </tr>)}</tbody>
+          </table>
+          {query.hasNextPage && <Button variant="outline" disabled={query.isFetchingNextPage} onClick={() => query.fetchNextPage()}>加载更多</Button>}
+        </div>
       ) : (
         <div className="history-list">
           {items.map((item) => (
@@ -78,15 +106,7 @@ export function History() {
               <button
                 className="text-button"
                 disabled={busy}
-                onClick={() => {
-                  draft.initialize({
-                    ...fromDecisionRequest(item.request),
-                    requestText: "",
-                  }, "history", null);
-                  draft.setRunId(null);
-                  draft.setOrigin(null);
-                  navigate("/map");
-                }}
+                onClick={() => repeatMeal(item.request)}
               >
                 按类似条件再选一次
               </button>
@@ -107,6 +127,7 @@ export function History() {
   );
 }
 export function Detail() {
+  const desktop = useDesktop();
   const client = useQueryClient(),
     draft = useDraft(),
     navigate = useNavigate();
@@ -131,6 +152,7 @@ export function Detail() {
       : undefined;
   const superseded = query.error instanceof ApiError && query.error.code === "RUN_SUPERSEDED";
   const navigation = place?.navigationUrl;
+  const map = place && run && <FoodMap origin={run.request.origin} places={[place]} selected={place.id} />;
   return (
     <>
       {!place && <header className="compact-heading">
@@ -148,30 +170,23 @@ export function Detail() {
         </div>
       ) : place && run ? (
         <section className="place-detail">
-          <PageHero className="detail-hero">
+          {desktop ? <DesktopPageHeader title={place.name}>
+            <Button variant="outline" asChild><Link to="/history"><ArrowLeft data-icon="inline-start" />返回历史</Link></Button>
+          </DesktopPageHeader> : <PageHero className="detail-hero">
             <Link className="back-link" to="/history" aria-label="返回历史"><ArrowLeft /><span>这一餐，选好了</span></Link>
             <h1>{place.name}</h1>
-            <p>{place.cuisineTypes.join(" · ")}</p>
-          </PageHero>
+          </PageHero>}
+          <div className={desktop ? "desktop-detail-layout" : undefined}>
+          <div className={desktop ? "desktop-detail-info" : undefined}>
           {run.warnings.map((warning) => (
             <p className="warning-text" role="status" key={warning}>{warning}</p>
           ))}
-          <dl className="detail-facts">
-            <div><dt>直线距离</dt><dd>{formatDistance(place.straightLineDistanceMeters)}</dd></div>
-            <div><dt>参考人均</dt><dd>{place.averageCost != null ? `¥${place.averageCost}` : "暂无数据"}</dd></div>
-            <div><dt>评分</dt><dd>{place.rating ?? "暂无数据"}</dd></div>
-          </dl>
-          <FoodMap
-            origin={run.request.origin}
-            places={[place]}
-            selected={place.id}
-          />
+          <PlaceFacts place={place} />
+          {!desktop && map}
           <p className="address-summary">
             <MapPin size={16} />
             {place.address}
           </p>
-          <h2 className="reason-heading">推荐理由</h2>
-          <p className="reason">{place.reason}</p>
           <p className="distance-note">
             距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}
             ，实际道路距离可能更长。
@@ -207,6 +222,12 @@ export function Detail() {
               timeZone: "Asia/Shanghai",
             })}
           </p>
+          </div>
+          {desktop && <aside className="desktop-results-map desktop-detail-map" aria-label="餐厅位置">
+            <header><h2>餐厅位置</h2></header>
+            {map}
+          </aside>}
+          </div>
         </section>
       ) : (
         <section className="empty">

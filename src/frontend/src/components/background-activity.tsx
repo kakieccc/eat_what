@@ -20,7 +20,7 @@ const submissionWaitMs = 15_000;
 
 type Step = { node: string; label: string; done: boolean };
 
-export function BackgroundActivity() {
+export function useBackgroundActivity(enabled: boolean) {
   const { pathname } = useLocation();
   const client = useQueryClient();
   const job = useDraft((state) => state.job);
@@ -34,7 +34,7 @@ export function BackgroundActivity() {
   const query = useQuery({
     queryKey: ["run", runId],
     queryFn: ({ signal }) => readRecommendation(client, runId!, signal),
-    enabled: !!runId && !isDiscardedRun(client, runId),
+    enabled: enabled && !!runId && !isDiscardedRun(client, runId),
     refetchInterval: (q) =>
       streamingRunId !== runId && ["pending", "running"].includes(q.state.data?.status ?? "")
         ? 2000
@@ -42,11 +42,11 @@ export function BackgroundActivity() {
     refetchIntervalInBackground: true,
     retry: false,
   });
-  const run = query.data;
+  const run = job?.kind === "recommendation" ? undefined : query.data;
   const active = !!run && ["pending", "running"].includes(run.status);
 
   useEffect(() => {
-    if (!job || job.status !== "submitting") return;
+    if (!enabled || !job || job.status !== "submitting") return;
     const controller = new AbortController();
     const current = () =>
       !controller.signal.aborted && useDraft.getState().job === job;
@@ -57,7 +57,7 @@ export function BackgroundActivity() {
       useDraft.getState().setJob({
         ...job,
         status: "failed",
-        error: "500 Error：提交确认超时，任务可能已受理，请重新确认结果。",
+        error: "提交确认超时，任务可能已受理，请重新确认结果。",
       });
     }, submissionWaitMs);
     const submit = async () => {
@@ -107,11 +107,11 @@ export function BackgroundActivity() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [job, client]);
+  }, [job, client, enabled]);
 
   // Keep one subscription attempt per active run; a failed stream leaves polling in charge.
   useEffect(() => {
-    if (!runId || !active) return;
+    if (!enabled || !runId || !active) return;
     const controller = new AbortController();
     const current = () =>
       !controller.signal.aborted &&
@@ -125,7 +125,7 @@ export function BackgroundActivity() {
         setStreamingRunId(null);
         setProgress((previous) => ({
           runId, steps: previous.runId === runId ? previous.steps : [],
-          error: "500 Error：进度连接超时，已改为查询结果。",
+          error: "进度连接超时，已改为查询结果。",
         }));
         controller.abort();
       }, 35_000);
@@ -183,17 +183,17 @@ export function BackgroundActivity() {
           steps: previous.runId === runId ? previous.steps : [],
           error: error instanceof ApiError && ["USER_STREAM_LIMIT_REACHED", "STREAM_CAPACITY_REACHED"].includes(error.code)
             ? "实时进度连接已满，已改为查询结果。"
-            : error instanceof ApiError ? error.message : "500 Error：进度连接中断，已改为查询结果。",
+            : error instanceof ApiError ? error.message : "进度连接中断，已改为查询结果。",
         }));
       }
     }).finally(() => clearTimeout(idleTimer));
     return () => { clearTimeout(idleTimer); controller.abort(); };
-  }, [runId, active, client]);
+  }, [runId, active, client, enabled]);
 
   const sessionId = run?.discoverySessionId;
   useEffect(() => {
     if (
-      query.error instanceof ApiError &&
+      enabled && query.error instanceof ApiError &&
       query.error.code === "RUN_SUPERSEDED" &&
       sessionId
     ) {
@@ -208,9 +208,9 @@ export function BackgroundActivity() {
         },
       );
     }
-  }, [query.error, sessionId, runId, client]);
+  }, [query.error, sessionId, runId, client, enabled]);
 
-  if (!job && !runId) return null;
+  if (!enabled || (!job && !runId)) return null;
   const submitting = job?.status === "submitting";
   const saved =
     (job?.kind === "choice" && job.status === "saved") || !!run?.choice;
@@ -227,8 +227,9 @@ export function BackgroundActivity() {
       ? errorMessage(run.errorCode ?? "RUN_FAILED", "推荐未完成，请重试。")
       : "");
   const target = saved ? `/decision-runs/${job?.runId ?? runId}` : "/discover";
+  const onTarget = pathname === target;
   const completed = run?.status === "completed" && !pending && !error && (!job || job.status === "saved");
-  if (pathname === target && completed) return null;
+  if (onTarget && completed) return null;
   const title = submitting
     ? job.kind === "choice"
       ? "正在保存选择…"
@@ -261,7 +262,9 @@ export function BackgroundActivity() {
         <strong>{title}</strong>
       </div>
       {pending && (
-        <p className="muted">可以继续浏览其他页面，完成后在这里查看结果。</p>
+        <p className="muted">{onTarget
+          ? "正在根据你的条件筛选附近餐厅，请稍候。"
+          : "可以继续浏览其他页面，完成后在这里查看结果。"}</p>
       )}
       {active && steps.length > 0 && (
         <ol className="activity-steps" aria-label="推荐进度">
@@ -283,7 +286,7 @@ export function BackgroundActivity() {
         </p>
       )}
       <div className="activity-actions">
-        {job && job.status !== "saved" && (
+        {job && job.status !== "saved" && (!onTarget || !submitting) && (
           <Button
             variant="outline"
             onClick={() =>
@@ -295,7 +298,7 @@ export function BackgroundActivity() {
             {job.status === "failed" || job.status === "rejected" ? "重试提交" : "重新确认状态"}
           </Button>
         )}
-        {runId && (
+        {runId && !onTarget && (
           <Button variant="outline" asChild>
             <Link to={target}>
               {saved

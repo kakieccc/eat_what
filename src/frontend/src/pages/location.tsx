@@ -3,11 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { ArrowLeft, LocateFixed, Search, MapPin } from "lucide-react";
 import { FoodMap } from "../components/map";
 import { Button } from "../components/ui/button";
-import { locate } from "../lib/amap";
+import { DesktopPageHeader } from "../components/desktop-page-header";
+import { useDesktop } from "../lib/use-desktop";
+import { locate, resolveLocation } from "../lib/amap";
 import { request } from "../lib/api";
 import { useDraft } from "../lib/store";
 import { originSchema, type Origin } from "../lib/schemas";
 export function Location() {
+  const desktop = useDesktop();
   const navigate = useNavigate(),
     draft = useDraft(),
     [selected, setSelected] = useState<Origin | null>(draft.origin),
@@ -51,13 +54,7 @@ export function Location() {
     setSelected(null);
     setError("");
     try {
-      const query = new URLSearchParams({
-        latitude: String(point.latitude),
-        longitude: String(point.longitude),
-      });
-      const origin = await request(
-        `/resolved-locations?${query}`, undefined, "GET", undefined, undefined, originSchema,
-      );
+      const origin = await resolveLocation(point);
       if (seq === sequence.current) setSelected(origin);
     } catch (e) {
       if (seq === sequence.current)
@@ -80,14 +77,8 @@ export function Location() {
       }
     }
   };
-  return (
-    <section className="location-page">
-      <header className="compact-heading">
-        <button aria-label="返回首页" onClick={() => navigate("/")}>
-          <ArrowLeft />
-        </button>
-        <h1>选择出发地点</h1>
-      </header>
+  const searchControls = (
+    <>
       <div className="search-row">
         <label>
           <Search size={18} />
@@ -120,7 +111,10 @@ export function Location() {
           ))}
         </div>
       )}
-      <FoodMap origin={selected} onPick={pick} />
+    </>
+  );
+  const selection = (
+    <>
       <div className="selected-address">
         <MapPin size={18} />
         <span>
@@ -145,6 +139,25 @@ export function Location() {
         使用这个位置
       </Button>
       <p className="footnote">仅在你确认后用于推荐，不持续追踪位置。</p>
+    </>
+  );
+  const map = <FoodMap origin={selected} onPick={pick} />;
+  return (
+    <section className="location-page">
+      {desktop ? <DesktopPageHeader title="选择出发地点" description="搜索地址或在地图上选点，确认这一餐从哪里出发。">
+        <Button variant="outline" onClick={() => navigate("/")}><ArrowLeft data-icon="inline-start" />返回选餐</Button>
+      </DesktopPageHeader> : <header className="compact-heading">
+        <button aria-label="返回首页" onClick={() => navigate("/")}><ArrowLeft /></button>
+        <h1>选择出发地点</h1>
+      </header>}
+      {desktop ? <div className="desktop-location-layout">
+        <div className="desktop-location-map">{map}</div>
+        <aside className="desktop-location-controls">
+          <h2>从哪里出发？</h2>
+          {searchControls}
+          {selection}
+        </aside>
+      </div> : <>{searchControls}{map}{selection}</>}
     </section>
   );
 }

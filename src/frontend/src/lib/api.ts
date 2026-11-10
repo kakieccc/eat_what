@@ -14,7 +14,7 @@ export const config = publicConfig.safeParse(import.meta.env);
 export const configError = config.success
   ? null
   : "请先配置 src/frontend/.env 中的 API 地址、高德 JS Key 和安全码，然后重启前端。";
-export const serverErrorMessage = "500 Error：服务暂时不可用";
+export const serverErrorMessage = "服务暂时不可用，请稍后重试";
 let csrfToken: string | null = null;
 let sessionVersion = 0;
 export const getSessionVersion = () => sessionVersion;
@@ -25,7 +25,14 @@ export function requireCurrentSession(version: number, signal?: AbortSignal) {
     throw new DOMException("Request is no longer current", "AbortError");
 }
 export function errorMessage(code: string, message?: string) {
-  if (code === "QUEUE_TIMEOUT") return "排队超过等待时限，请重新推荐。";
+  if (code === "QUEUE_TIMEOUT") return "本次请求排队超时，请稍后按当前条件重试。";
+  if (code === "DECISION_TIMEOUT") return "本次推荐处理超时，请稍后按当前条件重试。";
+  if (code === "INTERNAL_ERROR") return "服务器处理请求时出现异常，请稍后重试。";
+  if (code === "LLM_UNAVAILABLE") return "推荐分析服务暂时不可用，请稍后按当前条件重试。";
+  if (code === "LLM_INVALID_OUTPUT") return "推荐分析暂时没能生成有效结果，请按当前条件重试。";
+  if (["AMAP_UNAVAILABLE", "AMAP_SCHEMA_ERROR", "AMAP_INVALID_RESPONSE"].includes(code))
+    return "地图服务暂时异常，未能完成餐厅检索，请稍后重试。";
+  if (code === "RUN_FAILED") return "本次推荐意外中断，请稍后按当前条件重试。";
   if (code === "PREFERENCE_CONFLICT") return "偏好已更新，请刷新页面后再保存";
   if (code === "SELECTION_COMPLETED")
     return "本次选餐已结束，请开始新的选餐。";
@@ -36,6 +43,11 @@ export function errorMessage(code: string, message?: string) {
   return message ?? "服务暂时不可用";
 }
 let unauthorizedHandler: (() => void) | null = null;
+let serviceErrorHandler: (() => void) | null = null;
+
+export function setServiceErrorHandler(handler: (() => void) | null) {
+  serviceErrorHandler = handler;
+}
 
 export function setCsrfToken(value: string | null) {
   csrfToken = value;
@@ -70,6 +82,7 @@ export async function fetchResponse(path: string, options: RequestInit): Promise
   } catch (error) {
     requireCurrentSession(version, signal);
     if (error instanceof DOMException && error.name === "AbortError") throw error;
+    serviceErrorHandler?.();
     throw new Error(configError ?? serverErrorMessage);
   }
   requireCurrentSession(version, signal);
@@ -104,6 +117,8 @@ export async function responseData(response: Response, signal?: AbortSignal): Pr
     const envelope = parsed.success ? parsed.data : null;
     const code = envelope?.error.code ?? (response.status >= 500 ? "INTERNAL_ERROR" : "UNKNOWN");
     if (response.status === 401 && code === "AUTH_REQUIRED") handleUnauthorized();
+    if (response.status >= 500 && !["QUEUE_FULL", "AUTH_BUSY", "STREAM_CAPACITY_REACHED"].includes(code))
+      serviceErrorHandler?.();
     throw new ApiError(
       errorMessage(code, envelope?.error.message ?? serverErrorMessage),
       response.status,

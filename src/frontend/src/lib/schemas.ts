@@ -2,22 +2,21 @@ import { z } from "zod";
 import { navigationHref } from "./utils";
 export type Point = { latitude: number; longitude: number };
 export const cuisines = [
-  "中餐",
-  "面馆",
+  "家常菜",
+  "面食",
   "火锅",
-  "烧烤",
-  "快餐",
+  "日料",
   "轻食",
-  "日韩料理",
-  "东南亚料理",
+  "川菜", "湘菜", "粤菜",
+  "烧烤",
+  "小吃快餐",
   "西餐",
   "咖啡甜品",
-  "小吃",
-  "其他餐饮",
 ];
-export const excludedCuisineOptions = [
-  "川菜", "湘菜", "粤菜", "江浙菜", "鲁菜", "徽菜", "闽菜", "东北菜",
-  "西北菜", "日韩料理", "东南亚料理", "西餐",
+export const tasteOptions = [
+  "清淡", "微辣", "中辣", "重辣", "少油", "少盐", "不吃香菜", "不吃葱蒜",
+  "热乎", "适合一人食", "适合聊天", "朋友聚餐", "家庭聚餐", "带小朋友",
+  "安静一些", "赶时间",
 ];
 export const originSchema = z.object({
   latitude: z.number().min(-90).max(90),
@@ -30,15 +29,20 @@ export type SearchRadius = (typeof radiusValues)[number];
 export function isSearchRadius(value: unknown): value is SearchRadius {
   return radiusValues.some((radius) => radius === value);
 }
+export function integerBudget(value: string): string {
+  const amount = Number(value);
+  return value !== "" && Number.isFinite(amount) ? String(Math.trunc(amount)) : value;
+}
 const money = z
   .string()
+  .transform((value) => value === "" ? null : integerBudget(value))
+  .nullable()
   .refine(
     (v) =>
-      v === "" ||
-      (/^\d+(?:\.\d{1,2})?$/.test(v) && Number(v) <= 10000),
-    "请输入 0–10000 的金额，最多两位小数",
-  )
-  .nullable();
+      v === null ||
+      (/^\d+$/.test(v) && Number(v) <= 10000),
+    "请输入 0–10000 的整数金额",
+  );
 export const allowedFoodLimit = 5;
 const foodNames = z.array(z.string().trim().min(1).max(30));
 export const budgetSchema = z
@@ -47,11 +51,10 @@ export const budgetSchema = z
     (b) =>
       b.min === null ||
       b.max === null ||
-      b.min === "" ||
-      b.max === "" ||
       Number(b.min) <= Number(b.max),
     "预算下限不能高于上限",
   );
+export type Budget = z.infer<typeof budgetSchema>;
 export const preferencesSchema = z
   .object({
     budgetPerPerson: budgetSchema,
@@ -94,8 +97,6 @@ export const accountDefaultsSchema = mealPreferencesSchema.extend({
 export type AccountDefaults = z.infer<typeof accountDefaultsSchema>;
 export const preferenceOverridesSchema = accountDefaultsSchema.partial();
 export type PreferenceOverrides = z.infer<typeof preferenceOverridesSchema>;
-export const learnableFields = ["budgetPerPerson", "radiusMeters", "requestText"] as const;
-export type LearnableField = (typeof learnableFields)[number];
 export const accountPreferencesSchema = z.object({
   defaults: accountDefaultsSchema,
   sources: z.record(z.string(), z.enum(["manual", "learned", "builtin"])),
@@ -130,7 +131,7 @@ export function sameDefault(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 export function editedOverrides(
-  baseline: AccountPreferences, p: Preferences, automatic: LearnableField[],
+  baseline: AccountPreferences, p: Preferences,
 ): PreferenceOverrides {
   const values = accountDefaults(p);
   const overrides: PreferenceOverrides = { ...baseline.overrides };
@@ -140,7 +141,6 @@ export function editedOverrides(
       Object.assign(overrides, { [key]: values[key] });
     }
   }
-  for (const key of automatic) delete overrides[key];
   return overrides;
 }
 export const decisionRequestSchema = z.object({
@@ -173,7 +173,7 @@ export function fromDecisionRequest(r: DecisionRequest): Preferences {
   };
 }
 export const defaults: Preferences = {
-  budgetPerPerson: { min: "20", max: "60" },
+  budgetPerPerson: { min: "0", max: "60" },
   radiusMeters: 2000,
   allowedFoods: [],
   excludedFoods: [],
