@@ -5,7 +5,7 @@ import { Check, SlidersHorizontal, ChevronRight, ChevronDown } from "lucide-reac
 import { cn, formatBudget, formatDistance } from "../lib/utils";
 import { useDesktop } from "../lib/use-desktop";
 import { DesktopPageHeader } from "./desktop-page-header";
-import { PageHero } from "./brand";
+import { Brand, PageHero } from "./brand";
 import {
   preferencesSchema,
   cuisines,
@@ -63,6 +63,7 @@ export function PreferencesForm({
     initial.requestText.split("；").filter((value) => value && !tasteOptions.includes(value)).join("；"),
   );
   const [showOtherTaste, setShowOtherTaste] = useState(!!otherTaste);
+  const initialMinimum = integerBudget(initial.budgetPerPerson.min || "1");
   const {
     control,
     register,
@@ -78,7 +79,7 @@ export function PreferencesForm({
     defaultValues: {
       ...initial,
       budgetPerPerson: {
-        min: integerBudget(initial.budgetPerPerson.min || "0"),
+        min: initialMinimum === "0" ? "1" : initialMinimum,
         max: initial.budgetPerPerson.max ? integerBudget(initial.budgetPerPerson.max) : null,
       },
     },
@@ -170,22 +171,18 @@ export function PreferencesForm({
   const foodSection = (
     <section className="food-section">
       <fieldset>
-        <legend className={personal || desktop ? undefined : "sr-only"}>
-          限定食物类型 {desktop ? <span>最多选择 {allowedFoodLimit} 项</span> : !personal && <span>任选其一</span>}
+        <legend>
+          {personal || desktop ? "限定食物类型" : "想吃什么"} {desktop && <span>最多选择 {allowedFoodLimit} 项</span>}
         </legend>
         <div className="food-controls">
           {personal || desktop ? cuisineOptions("allowedFoods") : <>
-            {foodInput}
             <div className="chips">
-            <button type="button" aria-pressed={!chosen.length} onClick={() => setAllowedText("")}>
-              {!chosen.length && <Check aria-hidden="true" />}不限
-            </button>
-            {cuisines.slice(0, 5).map((c) => (
+            {[...new Set(["家常菜", "面食", "饺子", "轻食", ...chosen])].map((c) => (
               <button
                 type="button"
                 key={c}
                 aria-pressed={chosen.includes(c)}
-                disabled={chosen.length >= allowedFoodLimit && !chosen.includes(c)}
+                disabled={disabled || (chosen.length >= allowedFoodLimit && !chosen.includes(c))}
                 onClick={() => toggleFood("allowedFoods", c)}
               >
                 {chosen.includes(c) && <Check aria-hidden="true" />}{c}
@@ -203,6 +200,7 @@ export function PreferencesForm({
     <div className="sheet-fields">
       {!personal && !desktop && <fieldset data-invalid={!!errors.allowedFoods || undefined}>
         <legend>更多限定类型</legend>
+        {foodInput}
         {cuisineOptions("allowedFoods")}
         {errors.allowedFoods && <p className="error" role="alert">{errors.allowedFoods.message}</p>}
       </fieldset>}
@@ -302,7 +300,7 @@ export function PreferencesForm({
       onSubmit={handleSubmit(async (value) => {
         clearErrors();
         try {
-          const budget = { ...value.budgetPerPerson, min: value.budgetPerPerson.min ?? "0" };
+          const budget = { ...value.budgetPerPerson, min: value.budgetPerPerson.min ?? "1" };
           setValue("budgetPerPerson", budget);
           await onSubmit({
             ...value,
@@ -318,11 +316,11 @@ export function PreferencesForm({
     >
       {desktop && !personal && <DesktopPageHeader title="想吃什么？" description="从附近出发，选一顿合心意的。" />}
       {!desktop && !personal && <PageHero className="home-header">
-        <h1>想吃什么？</h1>{headingAction}
+        <div className="mobile-brand-row"><Brand />{headingAction}</div>
+        <h1>想吃什么？</h1>
       </PageHero>}
       <div className={desktop ? "desktop-meal-layout" : "mobile-form-layout"}>
         <div className={desktop ? "desktop-form-fields" : "mobile-form-fields"}>
-          {!personal && foodSection}
           <div className="financial-fields">
             <fieldset className="budget-section">
               <legend>
@@ -344,7 +342,7 @@ export function PreferencesForm({
               )}
             </fieldset>
             <fieldset data-invalid={!!errors.radiusMeters || undefined}>
-              <legend className="field-heading">搜索半径</legend>
+              <legend className="field-heading">搜索范围</legend>
               <RadiusOptions
                 value={radius}
                 onChange={(value) =>
@@ -363,7 +361,7 @@ export function PreferencesForm({
               )}
             </fieldset>
           </div>
-          {personal && foodSection}
+          {foodSection}
           <div className="note-section">
             <div className="field-heading">
               <label className="field-label" htmlFor="request-text">

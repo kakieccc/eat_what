@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
+from app.core.config import settings
 from app.core.errors import AppError
 from app.core.ids import uid
 from app.modules.decision.models import DecisionRun, DiscoverySession, PlaceCandidate
@@ -66,7 +67,11 @@ async def record_meal(
         restaurant_facts={"category_name": place.category_name,
                           "cuisine_types": place.cuisine_types},
     ))
-    if row.learning_enabled and row.meal_count >= 10 and row.meal_count % 5 == 0:
+    if (
+        row.learning_enabled
+        and row.meal_count >= settings.preference_learning_min_meals
+        and row.meal_count % settings.preference_learning_interval == 0
+    ):
         row.requested_count = row.meal_count
         if row.learning_status != "running":
             row.learning_status = "queued"
@@ -99,8 +104,8 @@ class PreferencesRepository:
             # The switch leaves defaults unchanged, so an open editor keeps its valid revision.
             row.learning_enabled = enabled
             if enabled:
-                eligible_count = row.meal_count // 5 * 5
-                if eligible_count >= 10 and eligible_count > row.attempted_count:
+                eligible_count = row.meal_count // settings.preference_learning_interval * settings.preference_learning_interval
+                if eligible_count >= settings.preference_learning_min_meals and eligible_count > row.attempted_count:
                     row.requested_count = eligible_count
                     row.learning_status = "queued"
             else:
@@ -160,7 +165,7 @@ class PreferencesRepository:
             samples = list((await session.scalars(select(PreferenceSample).where(
                 PreferenceSample.user_id == row.user_id,
                 PreferenceSample.meal_number <= row.claimed_count,
-            ).order_by(PreferenceSample.meal_number.desc()).limit(20))).all())
+            ).order_by(PreferenceSample.meal_number.desc()).limit(settings.preference_learning_sample_limit))).all())
             return [MealEvidence(
                 id=sample.id, meal_number=sample.meal_number, active_changes=sample.active_changes,
                 request_text=sample.request_text, restaurant_facts=sample.restaurant_facts,

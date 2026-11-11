@@ -19,7 +19,7 @@ class TaskWorker:
         lease_seconds: int = 60,
         poll_seconds: float = 1,
         maintenance: Callable[[], Awaitable[None]] | None = None,
-        concurrency: int = 2,
+        concurrency: int = 8,
     ) -> None:
         self.store = store
         self.handler = handler

@@ -1,16 +1,9 @@
 import re
 from collections import Counter
 
+from app.core.config import settings
 from app.modules.decision.schemas import DecisionRequest
 from app.modules.places.schemas import Place
-
-WEIGHTS = dict(
-    distance_cost=0.22,
-    budget_match=0.18,
-    rating_quality=0.14,
-    novelty=0.05,
-    data_completeness=0.07,
-)
 
 
 def eligible(
@@ -50,7 +43,7 @@ def eligible(
                 }
             ]
             if p.average_cost is None and (
-                conditions.budget_per_person.min is not None
+                conditions.budget_per_person.min
                 or conditions.budget_per_person.max is not None
             ):
                 warnings.append("人均暂无数据，无法确认符合预算")
@@ -67,7 +60,7 @@ def score_places(
     recent: list[str],
 ) -> list[Place]:
     conditions = pref.preferences
-    weights = WEIGHTS.copy()
+    weights = settings.decision_score_weights.copy()
     boost = {
         "closer": "distance_cost",
         "cheaper": "budget_match",
@@ -127,7 +120,7 @@ def sort_places(places: list[Place]) -> list[Place]:
 def diverse(places: list[Place]) -> list[Place]:
     selected: list[Place] = []
     remaining = places.copy()
-    while remaining and len(selected) < 3:
+    while remaining and len(selected) < settings.decision_recommendation_limit:
 
         def priority(p: Place) -> float:
             brand = re.split(r"[（(]", p.name)[0]

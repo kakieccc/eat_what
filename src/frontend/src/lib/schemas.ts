@@ -173,7 +173,7 @@ export function fromDecisionRequest(r: DecisionRequest): Preferences {
   };
 }
 export const defaults: Preferences = {
-  budgetPerPerson: { min: "0", max: "60" },
+  budgetPerPerson: { min: "1", max: "60" },
   radiusMeters: 2000,
   allowedFoods: [],
   excludedFoods: [],

@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from pydantic.alias_generators import to_camel
 
+from app.core.config import settings
 from app.modules.preferences.models import Preference
 from app.modules.preferences.schemas import (
     AccountPreferences,
@@ -14,7 +15,7 @@ from app.modules.preferences.schemas import (
 
 
 def builtin_defaults() -> AccountPreferences:
-    return AccountPreferences(budget_per_person=Budget(min=Decimal("20"), max=Decimal("60")))
+    return AccountPreferences(budget_per_person=Budget(min=Decimal("0"), max=Decimal("60")))
 
 
 def learned_values(result: LearnedPreferences) -> dict[str, object]:
@@ -47,6 +48,9 @@ def preferences_from_row(row: Preference | None) -> PreferencesResponse:
             enabled=row.learning_enabled if row else False,
             meal_count=count, status=row.learning_status if row else "idle",
             last_success_at=row.last_success_at if row else None,
-            next_learning_at=10 if count < 10 else (count // 5 + 1) * 5,
+            next_learning_at=(
+                settings.preference_learning_min_meals if count < settings.preference_learning_min_meals
+                else (count // settings.preference_learning_interval + 1) * settings.preference_learning_interval
+            ),
         ),
     })

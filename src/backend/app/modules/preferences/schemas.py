@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -10,11 +10,13 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     StringConstraints,
     field_serializer,
+    field_validator,
     model_serializer,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
 
+from app.core.config import settings
 from app.core.models import Model
 
 SearchRadius = Literal[500, 1000, 2000, 5000]
@@ -23,8 +25,13 @@ FoodName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1,
 
 
 class Budget(Model):
-    min: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
-    max: Decimal | None = Field(default=None, ge=0, le=10000, decimal_places=2)
+    min: Decimal | None = Field(default=Decimal("0"), ge=0, le=10000)
+    max: Decimal | None = Field(default=None, ge=0, le=10000)
+
+    @field_validator("min", "max")
+    @classmethod
+    def whole_yuan(cls, value: Decimal | None) -> Decimal | None:
+        return value.to_integral_value(rounding=ROUND_DOWN) if value is not None else None
 
     @field_serializer("min", "max", when_used="json")
     def decimal_string(self, value: Decimal | None) -> str | None:
@@ -91,7 +98,7 @@ class LearningStatus(Model):
     meal_count: int = 0
     status: Literal["idle", "queued", "running", "failed"] = "idle"
     last_success_at: datetime | None = None
-    next_learning_at: int = 10
+    next_learning_at: int = settings.preference_learning_min_meals
 
 
 class PreferencesResponse(Model):
@@ -110,18 +117,27 @@ class PrefillSnapshot(Model):
 
 class LearnedBudget(Model):
     value: Budget
-    sample_ids: list[str] = Field(min_length=3, max_length=20)
+    sample_ids: list[str] = Field(
+        min_length=settings.preference_learning_min_evidence,
+        max_length=settings.preference_learning_sample_limit,
+    )
 
 
 class LearnedRadius(Model):
     value: SearchRadius
-    sample_ids: list[str] = Field(min_length=3, max_length=20)
+    sample_ids: list[str] = Field(
+        min_length=settings.preference_learning_min_evidence,
+        max_length=settings.preference_learning_sample_limit,
+    )
 
 
 class LearnedSoftPreference(Model):
     text: str = Field(min_length=1, max_length=200)
     basis: Literal["requestText", "cuisine"]
-    sample_ids: list[str] = Field(min_length=3, max_length=20)
+    sample_ids: list[str] = Field(
+        min_length=settings.preference_learning_min_evidence,
+        max_length=settings.preference_learning_sample_limit,
+    )
 
 
 class LearnedPreferences(Model):

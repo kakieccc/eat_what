@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import random
 from typing import cast
 
@@ -17,7 +18,6 @@ log = logging.getLogger("food.amap")
 
 OPERATIONS = {
     "/v3/place/around",
-    "/v3/place/detail",
     "/v3/geocode/regeo",
     "/v3/assistant/inputtips",
 }
@@ -40,7 +40,7 @@ def unavailable(retryable: bool = True) -> AppError:
 class AmapClient:
     def __init__(self, client: httpx.AsyncClient, settings: Settings) -> None:
         self.client = client
-        self.key = settings.amap_web_service_key.get_secret_value()
+        self.key = os.environ["AMAP_WEB_SERVICE_KEY"]
         self.operation_timeout_seconds = settings.amap_operation_timeout_seconds
         self.timeout = httpx.Timeout(
             connect=settings.amap_connect_timeout_seconds,

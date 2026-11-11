@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import TypeVar
 
 from openai import APIError, AsyncOpenAI
@@ -15,7 +16,7 @@ log = logging.getLogger("food.llm")
 
 class OpenAICompatibleLlm:
     def __init__(self, settings: Settings, client: AsyncOpenAI):
-        self.model = settings.llm_model
+        self.model = os.environ["LLM_MODEL"]
         self.temperature = settings.llm_temperature
         self.client = client
 

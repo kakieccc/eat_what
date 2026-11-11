@@ -12,6 +12,8 @@ export interface MapInstance {
   remove(objects: unknown[]): void;
   setCenter(point: [number, number], immediately?: boolean): void;
   setFitView(overlays?: unknown[], immediately?: boolean): void;
+  zoomIn(): void;
+  zoomOut(): void;
 }
 export interface MarkerInstance {
   on(event: string, fn: () => void): void;
@@ -19,6 +21,7 @@ export interface MarkerInstance {
 export interface AmapAPI {
   Map: new (element: HTMLElement, options: object) => MapInstance;
   Marker: new (options: object) => MarkerInstance;
+  Circle: new (options: object) => unknown;
   convertFrom(
     point: [number, number],
     type: string,

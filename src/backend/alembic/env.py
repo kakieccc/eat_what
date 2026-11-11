@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
-from app.core.config import Settings
 from app.infrastructure.database.metadata import metadata
 
 config = context.config
@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(messa
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=Settings().db_url,
+        url=os.environ["DATABASE_URL"],
         target_metadata=metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -32,7 +32,7 @@ def run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_async_engine(Settings().db_url, poolclass=pool.NullPool)
+    engine = create_async_engine(os.environ["DATABASE_URL"], poolclass=pool.NullPool)
     try:
         async with engine.connect() as connection:
             await connection.run_sync(run_migrations)

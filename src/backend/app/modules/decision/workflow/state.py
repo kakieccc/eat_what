@@ -8,7 +8,7 @@ from app.modules.decision.schemas import DecisionRequest
 from app.modules.places.schemas import Place
 
 SCHEMA_VERSION = 12
-PROMPT_VERSION = "10"
+PROMPT_VERSION = "11"
 
 
 class DecisionState(TypedDict, total=False):

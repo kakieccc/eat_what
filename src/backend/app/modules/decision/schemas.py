@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from app.core.config import settings
 from app.core.models import Model
 from app.modules.choice.schemas import ChoiceSnapshot
 from app.modules.location.schemas import Origin
@@ -38,7 +39,7 @@ class FoodAssessment(Model):
 
 
 class FoodAssessments(Model):
-    places: list[FoodAssessment] = Field(min_length=1, max_length=10)
+    places: list[FoodAssessment] = Field(min_length=1, max_length=settings.decision_candidate_limit)
 
 
 class MatchScore(Model):
@@ -48,7 +49,7 @@ class MatchScore(Model):
 
 
 class Ranking(Model):
-    places: list[MatchScore] = Field(min_length=1, max_length=10)
+    places: list[MatchScore] = Field(min_length=1, max_length=settings.decision_candidate_limit)
 
 
 class DecisionRunResponse(Model):

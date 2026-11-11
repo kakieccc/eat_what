@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -56,7 +57,7 @@ def build_container(
     structured_llm = OpenAICompatibleLlm(settings, llm_client)
     llm = DecisionLlmService(structured_llm)
     preferences = PreferencesRepository(sessions)
-    repository = DecisionRepository(sessions, settings.llm_model)
+    repository = DecisionRepository(sessions, os.environ["LLM_MODEL"])
     auth = AuthService(
         SqlAuthRepository(sessions),
         Argon2PasswordHasher(
@@ -64,7 +65,7 @@ def build_container(
             settings.auth_password_max_waiters,
             settings.auth_password_wait_seconds,
         ),
-        settings.auth_session_days,
+        settings,
     )
     tasks = TaskStore(sessions, settings.task_queue_timeout_seconds)
     queries = DecisionQueryService(repository, places)
@@ -115,8 +116,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with (
         httpx.AsyncClient(follow_redirects=False) as client,
         AsyncOpenAI(
-            api_key=settings.llm_api_key.get_secret_value(),
-            base_url=settings.llm_base_url,
+            api_key=os.environ["LLM_API_KEY"],
+            base_url=os.environ["LLM_BASE_URL"],
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         ) as llm_client,

@@ -1,15 +1,13 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.modules.decision.rules.policies import eligible
 from app.modules.decision.workflow.context import execution_deadline
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
-
-CANDIDATE_LIMIT = 10
-SEARCH_LIMIT = 8
 
 
 def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
@@ -30,10 +28,10 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
         calls = summary.get("searchRequests", 0)
         failures = summary.get("searchFailures", 0)
         last_error: AppError | None = None
-        if not queue and len(unique) < CANDIDATE_LIMIT and not fallback_used:
+        if not queue and len(unique) < settings.decision_candidate_limit and not fallback_used:
             queue.append(("", 1))
             fallback_used = True
-        while queue and calls < SEARCH_LIMIT:
+        while queue and calls < settings.decision_search_limit:
             word, page = queue.pop(0)
             calls += 1
             try:
@@ -69,11 +67,11 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
                 summary[key] = summary.get(key, 0) + count
             if has_more:
                 queue.append((word, page + 1))
-            if not queue and len(unique) < CANDIDATE_LIMIT and not fallback_used:
+            if not queue and len(unique) < settings.decision_candidate_limit and not fallback_used:
                 queue.append(("", 1))
                 fallback_used = True
             # Give each search direction its first page before stopping.
-            if len(unique) >= CANDIDATE_LIMIT and calls >= len(keywords):
+            if len(unique) >= settings.decision_candidate_limit and calls >= len(keywords):
                 break
         if failures == calls and last_error is not None:
             raise last_error
@@ -81,7 +79,7 @@ def build(places: PlaceService) -> Callable[[State], Awaitable[State]]:
             retrieved=len(seen),
             searchRequests=calls,
             searchFailures=failures,
-            searchBudgetExhausted=int(bool(queue) and calls >= SEARCH_LIMIT),
+            searchBudgetExhausted=int(bool(queue) and calls >= settings.decision_search_limit),
         )
         return {
             "places": list(unique.values()), "filter_summary": summary,

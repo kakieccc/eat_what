@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from app.core.clock import now
+from app.core.config import Settings
 from app.core.errors import AppError
 from app.modules.auth.ports import AuthRepository, PasswordHasher, UserRecord
 from app.modules.auth.schemas import UserProfile
@@ -39,11 +40,11 @@ class SignedIn:
 
 class AuthService:
     def __init__(
-        self, repository: AuthRepository, passwords: PasswordHasher, session_days: int
+        self, repository: AuthRepository, passwords: PasswordHasher, settings: Settings
     ) -> None:
         self.repository = repository
         self.passwords = passwords
-        self.session_days = session_days
+        self.settings = settings
 
     @staticmethod
     def _tokens() -> tuple[str, str, str]:
@@ -55,19 +56,31 @@ class AuthService:
         self, username: str, password: str, display_name: str, ip: str
     ) -> SignedIn:
         username = username.lower()
-        await self.repository.consume_limit(digest(f"register:{ip}"), 10, 3600)
+        await self.repository.consume_limit(
+            digest(f"register:{ip}"),
+            self.settings.auth_register_limit,
+            self.settings.auth_register_window_seconds,
+        )
         encoded = await self.passwords.hash(password)
         token, csrf, token_hash = self._tokens()
         user = await self.repository.register(
             username, display_name, encoded,
-            token_hash, csrf, now() + timedelta(days=self.session_days),
+            token_hash, csrf, now() + timedelta(days=self.settings.auth_session_days),
         )
         return SignedIn(profile(user), token, csrf)
 
     async def login(self, username: str, password: str, ip: str) -> SignedIn:
         username = username.lower()
-        await self.repository.consume_limit(digest(f"login-ip:{ip}"), 30, 900)
-        await self.repository.consume_limit(digest(f"login-user:{username}"), 10, 900)
+        await self.repository.consume_limit(
+            digest(f"login-ip:{ip}"),
+            self.settings.auth_login_ip_limit,
+            self.settings.auth_login_window_seconds,
+        )
+        await self.repository.consume_limit(
+            digest(f"login-user:{username}"),
+            self.settings.auth_login_user_limit,
+            self.settings.auth_login_window_seconds,
+        )
         user = await self.repository.by_username(username)
         # Unknown usernames still pay the password-verification cost to reduce timing disclosure.
         encoded = user.password if user else self.passwords.dummy_hash
@@ -76,7 +89,7 @@ class AuthService:
             raise AppError("INVALID_CREDENTIALS", "用户名或密码错误", 401)
         token, csrf, token_hash = self._tokens()
         await self.repository.create_session(
-            user.id, token_hash, csrf, now() + timedelta(days=self.session_days),
+            user.id, token_hash, csrf, now() + timedelta(days=self.settings.auth_session_days),
             expected_password_hash=encoded,
         )
         return SignedIn(profile(user), token, csrf)
@@ -99,7 +112,11 @@ class AuthService:
     async def change_password(
         self, context: AuthContext, current_password: str, new_password: str
     ) -> None:
-        await self.repository.consume_limit(digest(f"change-password:{context.user.id}"), 10, 900)
+        await self.repository.consume_limit(
+            digest(f"change-password:{context.user.id}"),
+            self.settings.auth_change_password_limit,
+            self.settings.auth_change_password_window_seconds,
+        )
         user = await self.repository.by_username(context.user.username)
         if user is None or not await self.passwords.verify(current_password, user.password):
             raise AppError("INVALID_CREDENTIALS", "当前密码错误", 401)

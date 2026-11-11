@@ -27,7 +27,7 @@ EVENT_ADAPTER: TypeAdapter[ProgressEvent] = TypeAdapter(ProgressEvent)
 class DecisionStreamService:
     def __init__(
         self, tasks: TaskStore, queries: DecisionQueryService, auth: AuthService,
-        max_per_user: int = 2, max_connections: int = 8,
+        max_per_user: int = 2, max_connections: int = 32,
     ) -> None:
         self.tasks = tasks
         self.queries = queries

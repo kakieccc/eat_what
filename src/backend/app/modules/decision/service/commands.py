@@ -11,7 +11,7 @@ from app.modules.preferences.schemas import PrefillSnapshot
 
 class DecisionCommandService:
     def __init__(
-        self, repository: DecisionRepository, max_active: int = 4, submissions_per_minute: int = 3,
+        self, repository: DecisionRepository, max_active: int = 16, submissions_per_minute: int = 5,
     ) -> None:
         self.repository = repository
         self.max_active = max_active

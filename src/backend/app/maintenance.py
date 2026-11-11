@@ -11,7 +11,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
-from app.core.config import Settings
+from app.core.config import settings
 from app.infrastructure.amap.models import PlaceCache
 from app.infrastructure.database.session import create_sessions, engine_of
 from app.modules.auth.models import AuthRateLimit, AuthSession
@@ -20,11 +20,10 @@ from app.modules.decision.models import IdempotencyRecord
 log = logging.getLogger("food.maintenance")
 BATCH_SIZE = 1000
 
-
 async def cleanup(
     sessions: async_sessionmaker[AsyncSession], *, dry_run: bool = False
 ) -> dict[str, int]:
-    # Keep a fixed horizon so rows expiring during cleanup wait for the next invocation.
+    # 定期删除过期的缓存和会话数据
     cutoff = now()
     counts: dict[str, int] = {}
     for model, column, until in (
@@ -78,7 +77,7 @@ async def cleanup(
 
 
 async def run(dry_run: bool) -> None:
-    sessions = create_sessions(Settings())
+    sessions = create_sessions(settings)
     try:
         await cleanup(sessions, dry_run=dry_run)
     finally:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
@@ -8,17 +9,15 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from app.api.errors import error_response
-from app.core.config import Settings
 from app.core.errors import AppError
 
 
-# 处理跨域请求
-def _allowed_origins(settings: Settings) -> list[str]:
-    return [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
-
-
-def register_middlewares(app: FastAPI, settings: Settings) -> None:
-    allowed = _allowed_origins(settings)
+def register_middlewares(app: FastAPI) -> None:
+    allowed = [
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+        if origin.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed,

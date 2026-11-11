@@ -5,7 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUpRight, ChevronRight, ClipboardList, MapPin } from "lucide-react";
-import { PageHero } from "../components/brand";
+import { Brand, PageHero } from "../components/brand";
 import { DesktopPageHeader } from "../components/desktop-page-header";
 import { Button } from "../components/ui/button";
 import { FoodMap } from "../components/map";
@@ -48,7 +48,10 @@ export function History() {
   };
   return (
     <>
-      {desktop ? <DesktopPageHeader title="用餐历史" description="回看每一次选择，也可以按相似条件再选一餐。" /> : <PageHero className="history-hero"><h1>用餐历史</h1></PageHero>}
+      {desktop ? <DesktopPageHeader title="用餐历史" description="回看每一次选择，也可以按相似条件再选一餐。" /> : <PageHero className="history-hero">
+        <div className="mobile-brand-row"><Brand /></div>
+        <h1>用餐历史</h1>
+      </PageHero>}
       {busy && <p role="status">当前任务尚未完成或待确认，可以继续查看历史。</p>}
       {query.isPending ? (
         <p>正在读取历史…</p>
@@ -186,10 +189,6 @@ export function Detail() {
           <p className="address-summary">
             <MapPin size={16} />
             {place.address}
-          </p>
-          <p className="distance-note">
-            距出发位置直线 {formatDistance(place.straightLineDistanceMeters)}
-            ，实际道路距离可能更长。
           </p>
           {place.warnings.map((w) => (
             <p className="warning-text" key={w}>

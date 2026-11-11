@@ -4,13 +4,14 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import time
 
 from openai import AsyncOpenAI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import Settings
+from app.core.config import settings
 from app.core.ids import lock_id
 from app.infrastructure.database.session import create_sessions, engine_of
 from app.infrastructure.llm.provider import OpenAICompatibleLlm
@@ -68,12 +69,11 @@ async def run_batch(
 
 
 async def run() -> bool:
-    settings = Settings()
     sessions = create_sessions(settings)
     try:
         async with AsyncOpenAI(
-            api_key=settings.llm_api_key.get_secret_value(),
-            base_url=settings.llm_base_url,
+            api_key=os.environ["LLM_API_KEY"],
+            base_url=os.environ["LLM_BASE_URL"],
             timeout=settings.llm_timeout_seconds,
             max_retries=settings.llm_max_retries,
         ) as client:

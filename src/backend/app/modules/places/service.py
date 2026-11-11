@@ -51,19 +51,6 @@ class PlaceService:
         except TimeoutError:
             raise AppError("AMAP_UNAVAILABLE", "地图服务暂时不可用", 502, True) from None
 
-    async def detail(
-        self, external_id: str, origin: Point, *, deadline: float | None = None
-    ) -> Place:
-        until = deadline_after(self.timeout_seconds, deadline)
-        try:
-            async with asyncio.timeout_at(until):
-                result = await self.provider.detail(external_id, origin, deadline=until)
-                if asyncio.get_running_loop().time() >= until:
-                    raise TimeoutError
-                return result
-        except TimeoutError:
-            raise AppError("AMAP_UNAVAILABLE", "地图服务暂时不可用", 502, True) from None
-
     async def read(self, user_id: str, place_key: str) -> Place:
         return self.with_navigation(await self.repository.read(user_id, place_key))
 

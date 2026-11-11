@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import cast
 
 from sqlalchemy.ext.asyncio import (
@@ -14,9 +15,9 @@ from app.core.config import Settings
 
 def create_sessions(settings: Settings) -> async_sessionmaker[AsyncSession]:
     engine = create_async_engine(
-        settings.db_url,
-        pool_size=5,
-        max_overflow=5,
+        os.environ["DATABASE_URL"],
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
         pool_pre_ping=True,
         # Background exception tracebacks must not include SQL bound values.
         hide_parameters=True,

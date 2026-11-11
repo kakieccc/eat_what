@@ -23,7 +23,7 @@ export function Discover({ progress }: { progress: ReactNode }) {
   const draft = useDraft(),
     client = useQueryClient(),
     navigate = useNavigate();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null | undefined>();
   const [showMap, setShowMap] = useState(false);
   const busy = useMealBusy();
   const runQuery = useQuery({
@@ -77,10 +77,17 @@ export function Discover({ progress }: { progress: ReactNode }) {
   const unsuccessful = run?.status === "failed" || noMatches;
   const incompleteSearch = !!(run?.filterSummary.searchFailures || run?.filterSummary.detailFailures);
   const preferences = run?.request.preferences ?? draft.preferences;
-  const title = working ? "正在为你寻找合适的一餐" : unsuccessful ? "这次还没有选好" : "附近，合你心意";
+  const title = working ? "正在为你寻找合适的一餐" : unsuccessful ? "这次还没有选好" : run?.places.length ? `为你挑了 ${run.places.length} 家` : "附近，合你心意";
   const address = run?.request.origin.address || draft.origin?.address || "尚未确认出发位置";
-  const conditions = <>{formatDistance(preferences.radiusMeters)} 内 · {formatBudget(preferences.budgetPerPerson)}
-    <span>{" · "}{preferences.allowedFoods.length ? preferences.allowedFoods.join("、") : "不限菜系"}</span></>;
+  const activeId = selected === null ? null : run?.places.find((place) => place.id === selected)?.id ?? run?.places[0]?.id;
+  const meal = run?.request ?? draft.preferences;
+  const conditions = <>
+    <span>{formatBudget(preferences.budgetPerPerson)}</span>
+    <span>{formatDistance(preferences.radiusMeters)}</span>
+    <span>{({ breakfast: "早餐", lunch: "午餐", dinner: "晚餐", lateNight: "夜宵" })[meal.mealPeriod]} · {meal.partySize} 人</span>
+    {preferences.allowedFoods.length > 0 && <span>{preferences.allowedFoods.join("、")}</span>}
+    {meal.requestText && <span className="request-chip" title={meal.requestText}>{meal.requestText}</span>}
+  </>;
   const actions = <div className="hero-actions">
     <Button variant="outline" disabled={working} onClick={() => (run ? editRequest(run.request) : navigate("/"))}>
       <SlidersHorizontal data-icon="inline-start" />调整条件
@@ -92,7 +99,8 @@ export function Discover({ progress }: { progress: ReactNode }) {
   const map = <FoodMap
     origin={run?.request.origin ?? draft.origin}
     places={run?.places ?? []}
-    selected={selected}
+    selected={activeId}
+    radiusMeters={preferences.radiusMeters}
     onSelect={(id) => {
       setSelected(id);
       document.getElementById("place-" + id)?.scrollIntoView({
@@ -105,21 +113,16 @@ export function Discover({ progress }: { progress: ReactNode }) {
   }
   return (
     <>
-      {desktop ? <>
-        <DesktopPageHeader title={title} description={<><span className="desktop-origin"><MapPin size={17} />{address}</span><span className="desktop-conditions">{conditions}</span></>}>
-          {actions}
-        </DesktopPageHeader>
-        {!unsuccessful && progress}
-      </> : <PageHero className="discovery-hero">
+      {!desktop && <PageHero className="discovery-hero">
         <Link className="back-link" to="/" aria-label="返回首页"><ArrowLeft /></Link>
         <h1>{title}</h1>
         <p className="address-summary">
           <MapPin size={16} />
           {address}
         </p>
-        <p className="condition-summary">
+        <div className="condition-chips">
           {conditions}
-        </p>
+        </div>
         {actions}
         {!unsuccessful && progress}
       </PageHero>}
@@ -131,6 +134,13 @@ export function Discover({ progress }: { progress: ReactNode }) {
       {!desktop && showMap && <section id="recommendation-map" aria-label="推荐地图">{map}</section>}
       <div className={desktop ? "desktop-discovery-layout" : undefined}>
       <div className={desktop ? "desktop-results-list" : undefined}>
+      {desktop && <>
+        <DesktopPageHeader title={title} description={<span className="desktop-origin"><MapPin size={17} aria-hidden="true" />{address}</span>}>
+          {actions}
+        </DesktopPageHeader>
+        <div className="condition-chips">{conditions}</div>
+        {!unsuccessful && progress}
+      </>}
       {runQuery.error instanceof ApiError &&
         runQuery.error.code === "WORKFLOW_UPGRADED" && (
           <Button
@@ -175,13 +185,18 @@ export function Discover({ progress }: { progress: ReactNode }) {
       )}
       {run?.status === "completed" && run.places.length > 0 && (
         <section className="recommendation-results" aria-label="推荐结果">
+          <div className="results-heading">
+            <h2>附近餐厅</h2>
+            <div className="results-controls">
+              <Button variant="outline" disabled={working} onClick={() => refine("refresh")}><RefreshCw data-icon="inline-start" />换一批</Button>
+            </div>
+          </div>
           <div className="refine-row">
             {([
               ["closer", "更近", MapPin],
               ["cheaper", "更便宜", CircleDollarSign],
               ["higherRated", "评分更高", Star],
               ["differentCuisine", "换个口味", Utensils],
-              ["refresh", "换一批", RefreshCw],
             ] as const).map(([action, label, Icon]) => (
               <button
                 disabled={working}
@@ -198,8 +213,8 @@ export function Discover({ progress }: { progress: ReactNode }) {
               <div id={"place-" + place.id} key={place.id}>
                 <PlaceCard
                   place={place}
-                  selected={selected === place.id}
-                  onSelect={() => setSelected(place.id)}
+                  selected={activeId === place.id}
+                  onSelect={() => setSelected(activeId === place.id ? null : place.id)}
                   onChoose={() => choose(place)}
                   onExclude={() => refine("excludePlace", place.id)}
                   busy={working}
@@ -217,7 +232,7 @@ export function Discover({ progress }: { progress: ReactNode }) {
       )}
       </div>
       {desktop && <aside id="recommendation-map" className="desktop-results-map" aria-label="推荐地图">
-        <header><h2>附近餐厅</h2><p>点击标记，查看对应餐厅</p></header>
+        <header><h2>附近餐厅</h2></header>
         {map}
       </aside>}
       </div>

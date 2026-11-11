@@ -76,7 +76,7 @@ class DecisionTransaction:
         if recent is not None:
             retry_after = max(1, ceil((recent + timedelta(seconds=60) - current).total_seconds()))
             raise AppError(
-                "USER_TASK_RATE_LIMITED", "提交推荐过于频繁，请稍后再试", 429, True,
+                "USER_TASK_RATE_LIMITED", f"每 60 秒最多提交 {submissions_per_minute} 次推荐，请一分钟后再试", 429, True,
                 retry_after=retry_after,
             )
         # Hold the admission lock until task creation commits, across all users and processes.

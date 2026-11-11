@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.clock import now
+from app.core.config import settings
 from app.core.errors import AppError
 from app.core.ids import lock_id, uid
 from app.modules.choice.models import PlaceChoice
@@ -97,7 +98,7 @@ class DecisionRepository:
                 warnings.append("部分搜索暂不可用，候选餐厅可能不完整。")
             if run.filter_summary.get("detailFailures"):
                 warnings.append("部分餐厅详情获取失败，已剔除并尝试补充其他餐厅。")
-                if run.status == "completed" and len(candidates) < 3:
+                if run.status == "completed" and len(candidates) < settings.decision_recommendation_limit:
                     warnings.append(f"本次仅获得 {len(candidates)} 家有效推荐，可调整条件后重试。")
             return DecisionRunResponse(
                 decision_run_id=run.id,

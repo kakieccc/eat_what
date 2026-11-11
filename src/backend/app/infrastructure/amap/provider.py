@@ -187,24 +187,6 @@ class AmapGeoPlaceProvider:
                 }) for place in result.places
             ]})
 
-    async def detail(
-        self, external_id: str, origin: Point, *, deadline: float | None = None
-    ) -> Place:
-        operation = "/v3/place/detail"
-        async with self._budget(operation, deadline):
-            rows = await self._fetch(
-                operation,
-                {"id": external_id, "extensions": "all"},
-                PlaceResponse,
-                lambda response, fetched_at: mappers.places(response, origin, fetched_at),
-            )
-            if not rows:
-                raise AppError("PLACE_NOT_FOUND", "地点详情暂不可用", 404)
-            # Shared detail responses still need the current caller's distance.
-            return rows[0].model_copy(update={
-                "straight_line_distance_meters": distance(origin, rows[0].location),
-            })
-
     async def reverse(self, origin: Point, *, deadline: float | None = None) -> Origin:
         operation = "/v3/geocode/regeo"
         async with self._budget(operation, deadline):

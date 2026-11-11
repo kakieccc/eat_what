@@ -1,3 +1,4 @@
+from app.core.config import settings
 from app.core.errors import AppError
 from app.modules.decision.ports import StructuredLlm
 from app.modules.decision.rules.llm import (
@@ -53,7 +54,7 @@ class DecisionLlmService:
                         raise AppError("LLM_INVALID_OUTPUT", "食物匹配依据无效", 502)
             if assessment.allowed and not any(c.status == "match" for c in assessment.allowed):
                 continue
-            if any(c.status != "mismatch" for c in assessment.excluded):
+            if any(c.status == "match" for c in assessment.excluded):
                 continue
             kept.append(p)
         return kept
@@ -86,7 +87,11 @@ class DecisionLlmService:
         ranked = []
         for p in places:
             match = by_id[p.id]
-            total = round(p.score * 0.3 + match.score * 0.7, 2)
+            total = round(
+                p.score * settings.decision_base_score_weight
+                + match.score * settings.decision_request_match_weight,
+                2,
+            )
             ranked.append(
                 p.model_copy(
                     update={

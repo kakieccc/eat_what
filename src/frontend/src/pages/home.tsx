@@ -1,16 +1,15 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { MapPin, ChevronRight, KeyRound, Pencil } from "lucide-react";
+import { MapPin, ChevronRight, Settings } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { PreferencesForm } from "../components/preferences-form";
 import { Button } from "../components/ui/button";
-import { PageHero } from "../components/brand";
+import { Brand, PageHero } from "../components/brand";
 import { DesktopPageHeader } from "../components/desktop-page-header";
-import { AccountForm, type AccountEditMode } from "../components/account-form";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "../components/ui/sheet";
+import { AccountSettings } from "../components/account-settings";
+import { Sheet, SheetTrigger } from "../components/ui/sheet";
 import { useDraft } from "../lib/store";
 import { useMealBusy } from "../lib/recommendations";
-import { useAuth } from "../lib/auth";
 import { useDesktop } from "../lib/use-desktop";
 import { usePreferencePrefill, usePreferences } from "../lib/use-preferences";
 import { request } from "../lib/api";
@@ -113,36 +112,12 @@ function PreferenceEditor({
 
 export function Profile() {
   const desktop = useDesktop();
-  const auth = useAuth(),
-    navigate = useNavigate();
   const query = usePreferences();
   const client = useQueryClient();
   const [notice, setNotice] = useState("");
   const [editorVersion, setEditorVersion] = useState(0);
   const [updating, setUpdating] = useState(false);
   const [learningError, setLearningError] = useState("");
-  const [logoutBusy, setLogoutBusy] = useState(false);
-  const [logoutError, setLogoutError] = useState("");
-  const [accountMode, setAccountMode] = useState<AccountEditMode>("name");
-  const [accountOpen, setAccountOpen] = useState(false);
-  const [accountNotice, setAccountNotice] = useState("");
-  const editAccount = (mode: AccountEditMode) => {
-    setAccountMode(mode);
-    setAccountNotice("");
-    setAccountOpen(true);
-  };
-  const logout = async () => {
-    setLogoutBusy(true);
-    setLogoutError("");
-    try {
-      await auth.logout();
-      navigate("/login", { replace: true });
-    } catch (e) {
-      setLogoutError(e instanceof Error ? e.message : "退出失败");
-    } finally {
-      setLogoutBusy(false);
-    }
-  };
   const saved = (value: AccountPreferences) => {
     client.setQueryData(["preferences"], value);
     setEditorVersion((version) => version + 1);
@@ -165,19 +140,12 @@ export function Profile() {
     }
   };
   const learning = query.data?.learning;
-  const logoutButton = (
-    <Button type="button" variant={desktop ? "ghost" : "outline"} className="logout-button" disabled={logoutBusy} onClick={() => void logout()}>
-      {logoutBusy ? "正在退出…" : "退出登录"}{desktop && <ChevronRight size={18} aria-hidden="true" />}
-    </Button>
-  );
-  const passwordButton = (
-    <Button type="button" variant={desktop ? "outline" : "ghost"} className="account-password" disabled={logoutBusy} onClick={() => editAccount("password")}>
-      <KeyRound data-icon="inline-start" />修改密码
-    </Button>
-  );
   const learningControl = learning && (
     <section className="learning-control" aria-label="偏好学习">
-      <strong>偏好学习</strong>
+      <div>
+        <strong>偏好学习</strong>
+        <p>根据用餐记录更新常用偏好</p>
+      </div>
       <Button type="button" role="switch" aria-label="偏好学习" aria-checked={learning.enabled}
         className="learning-switch"
         variant={learning.enabled ? "default" : "outline"} disabled={updating}
@@ -186,40 +154,22 @@ export function Profile() {
       </Button>
     </section>
   );
-  const accountPanel = (
-    <section className="account-panel" aria-label="当前账号">
-      <div>
-        <div className="account-name-row">
-          <Button type="button" variant="ghost" className="account-name" disabled={logoutBusy}
-            aria-label={`修改昵称：${auth.user?.displayName}`} onClick={() => editAccount("name")}>
-            <strong>{auth.user?.displayName}</strong><Pencil data-icon="inline-end" aria-hidden="true" />
-          </Button>
-          {!desktop && passwordButton}
-        </div>
-        <div className="account-user-row">
-          <p className="account-username" title={`@${auth.user?.username}`}>@{auth.user?.username}</p>
-          {!desktop && learningControl}
-        </div>
-      </div>
-      {desktop && learningControl}
-      {desktop && <div className="account-actions">
-        {passwordButton}
-        {logoutButton}
-      </div>}
-      {accountNotice && <p role="status">{accountNotice}</p>}
-      {desktop && logoutError && <p role="alert" className="error">{logoutError}</p>}
-    </section>
+  const settingsTrigger = (
+    <SheetTrigger asChild>
+      <Button type="button" variant="outline" size="icon" className="profile-settings-trigger" aria-label="账号设置" title="账号设置">
+        <Settings className="size-5" aria-hidden="true" />
+      </Button>
+    </SheetTrigger>
   );
   return (
-    <>
-      {desktop ? <DesktopPageHeader title="你的用餐偏好" description="设置常用条件，让下一次选餐更合心意。" /> : <PageHero className="profile-hero">
+    <Sheet>
+      {desktop ? <DesktopPageHeader title="你的用餐偏好" description="设置常用条件，让下一次选餐更合心意。">
+        {settingsTrigger}
+      </DesktopPageHeader> : <PageHero className="profile-hero">
+        <div className="mobile-brand-row"><Brand />{settingsTrigger}</div>
         <h1>你的用餐偏好</h1>
       </PageHero>}
       <div className={desktop ? "desktop-profile-layout" : "mobile-profile-layout"}>
-      <aside className={desktop ? "desktop-profile-account" : "mobile-profile-account"}>
-      {accountPanel}
-      {learningError && <p className="error" role="alert">{learningError}</p>}
-      </aside>
       <div className="profile-editor">
       {query.isError && (
         <div className="error" role="alert">
@@ -238,24 +188,10 @@ export function Profile() {
       <p role="status">{notice}</p>
       </div>
       </div>
-      {!desktop && <div className="mobile-profile-logout">
-        {logoutButton}
-        {logoutError && <p role="alert" className="error">{logoutError}</p>}
-      </div>}
-      <Sheet open={accountOpen} onOpenChange={setAccountOpen}>
-        <SheetContent side="bottom" className="advanced-sheet account-sheet">
-          <SheetHeader className="account-sheet-heading">
-            <SheetTitle>{accountMode === "name" ? "修改显示名称" : "修改密码"}</SheetTitle>
-            <SheetDescription>
-              {accountMode === "name" ? "设置页面上显示的名称，最多 40 个字符。" : "修改后所有设备均需使用新密码重新登录。"}
-            </SheetDescription>
-          </SheetHeader>
-          <AccountForm key={accountMode} mode={accountMode} onNameSaved={() => {
-            setAccountOpen(false);
-            setAccountNotice("显示名称已更新。");
-          }} />
-        </SheetContent>
-      </Sheet>
-    </>
+      <AccountSettings>
+        {learningControl}
+        {learningError && <p className="error" role="alert">{learningError}</p>}
+      </AccountSettings>
+    </Sheet>
   );
 }

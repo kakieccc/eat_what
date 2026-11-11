@@ -1,10 +1,10 @@
-import { Clock, Star, Utensils } from "lucide-react";
+import { Clock, MapPin, Star, Utensils } from "lucide-react";
 import type { Place } from "../lib/schemas";
-import { formatDistance } from "../lib/utils";
+import { cn, formatDistance } from "../lib/utils";
 
-export function PlaceFacts({ place }: { place: Place }) {
+export function PlaceFacts({ place, compact = false }: { place: Place; compact?: boolean }) {
   return (
-    <div className="place-facts">
+    <div className={cn("place-facts", { compact })}>
       <div className="place-meta">
         <p>
           <Utensils size={16} aria-hidden="true" />
@@ -19,17 +19,17 @@ export function PlaceFacts({ place }: { place: Place }) {
       </div>
       <dl className="place-metrics">
         <div>
-          <dt>直线距离</dt>
+          <dt>{compact ? <><MapPin size={15} aria-hidden="true" /><span className="sr-only">直线距离</span></> : "直线距离"}</dt>
           <dd>{formatDistance(place.straightLineDistanceMeters)}</dd>
         </div>
         <div>
-          <dt>人均</dt>
+          <dt className={compact ? "sr-only" : undefined}>人均</dt>
           <dd data-missing={place.averageCost === null || undefined}>
-            {place.averageCost === null ? "暂无信息" : `¥${place.averageCost}`}
+            {place.averageCost === null ? "暂无信息" : <>{`¥${place.averageCost}`}{compact && <span className="metric-unit"> / 人</span>}</>}
           </dd>
         </div>
         <div>
-          <dt><Star size={16} aria-hidden="true" />评分</dt>
+          <dt><Star size={16} aria-hidden="true" /><span className={compact ? "sr-only" : undefined}>评分</span></dt>
           <dd data-missing={place.rating === null || undefined}>{place.rating ?? "暂无信息"}</dd>
         </div>
       </dl>
