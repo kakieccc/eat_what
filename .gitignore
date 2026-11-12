@@ -25,3 +25,13 @@ playwright-report/
 .playwright-mcp/
 coverage/
 /.backups/
+
+# local build and deployment configuration
+/.env.example
+/compose.yaml
+/deploy/
+/src/backend/.dockerignore
+/src/backend/Dockerfile
+/src/frontend/.dockerignore
+/src/frontend/Dockerfile
+/src/frontend/nginx.conf
