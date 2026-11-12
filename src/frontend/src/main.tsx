@@ -58,7 +58,7 @@ function App() {
   const anonymous = pathname === "/login" || pathname === "/register";
   const errorPage = pathname === "/error";
   const showNavigation = auth.state === "authenticated" && !configError && !errorPage;
-  const activity = useBackgroundActivity(showNavigation);
+  const { activity, lastRecommendation } = useBackgroundActivity(showNavigation);
   useEffect(() => watchRecommendations(client), []);
   useEffect(() => {
     setServiceErrorHandler(() => {
@@ -81,7 +81,6 @@ function App() {
           {configError}
         </aside>
       )}
-      {pathname !== "/discover" && activity}
       <main>
         {configError && !errorPage ? null : auth.state === "error" && !errorPage ? (
           <Navigate to="/error" replace state={{ from: location.pathname + location.search + location.hash }} />
@@ -91,14 +90,14 @@ function App() {
           <Suspense fallback={<p role="status">正在打开页面…</p>}>
             <Routes>
               <Route path="/error" element={<ServiceError />} />
-              <Route path="/login" element={<AuthPage mode="login" />} />
-              <Route path="/register" element={<AuthPage mode="register" />} />
+              <Route path="/login" element={<AuthPage key="login" mode="login" />} />
+              <Route path="/register" element={<AuthPage key="register" mode="register" />} />
               <Route element={<RequireAuth />}>
                 <Route path="/" element={<Home />} />
                 <Route path="/map" element={<Location />} />
                 <Route path="/discover" element={<Discover progress={activity} />} />
                 <Route path="/decision-runs/:runId" element={<Detail />} />
-                <Route path="/history" element={<History />} />
+                <Route path="/history" element={<History lastRecommendation={lastRecommendation} progress={activity} />} />
                 <Route path="/profile" element={<Profile />} />
                 <Route
                   path="*"

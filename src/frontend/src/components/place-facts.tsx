@@ -1,4 +1,4 @@
-import { Clock, MapPin, Star, Utensils } from "lucide-react";
+import { CircleDollarSign, Clock, MapPin, Star, Utensils } from "lucide-react";
 import type { Place } from "../lib/schemas";
 import { cn, formatDistance } from "../lib/utils";
 
@@ -23,7 +23,7 @@ export function PlaceFacts({ place, compact = false }: { place: Place; compact?:
           <dd>{formatDistance(place.straightLineDistanceMeters)}</dd>
         </div>
         <div>
-          <dt className={compact ? "sr-only" : undefined}>人均</dt>
+          <dt>{compact ? <><CircleDollarSign size={15} aria-hidden="true" /><span className="sr-only">人均</span></> : "人均"}</dt>
           <dd data-missing={place.averageCost === null || undefined}>
             {place.averageCost === null ? "暂无信息" : <>{`¥${place.averageCost}`}{compact && <span className="metric-unit"> / 人</span>}</>}
           </dd>

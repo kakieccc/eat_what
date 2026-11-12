@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   useInfiniteQuery,
@@ -22,7 +23,10 @@ import {
 } from "../lib/schemas";
 import { formatDistance } from "../lib/utils";
 import { useParams } from "react-router-dom";
-export function History() {
+export function History({ lastRecommendation, progress }: {
+  lastRecommendation: ReactNode;
+  progress: ReactNode;
+}) {
   const desktop = useDesktop();
   const navigate = useNavigate(),
     draft = useDraft();
@@ -46,12 +50,18 @@ export function History() {
     draft.setOrigin(null);
     navigate("/map");
   };
+  const resultButton = lastRecommendation ?? <Button variant="outline" disabled title="暂无可查看的推荐结果">
+    查看上次推荐结果
+  </Button>;
   return (
     <>
-      {desktop ? <DesktopPageHeader title="用餐历史" description="回看每一次选择，也可以按相似条件再选一餐。" /> : <PageHero className="history-hero">
+      {desktop ? <DesktopPageHeader title="用餐历史" description="回看每一次选择，也可以按相似条件再选一餐。">
+        {resultButton}
+      </DesktopPageHeader> : <PageHero className="history-hero">
         <div className="mobile-brand-row"><Brand /></div>
-        <h1>用餐历史</h1>
+        <div className="history-heading"><h1>用餐历史</h1>{resultButton}</div>
       </PageHero>}
+      {progress}
       {busy && <p role="status">当前任务尚未完成或待确认，可以继续查看历史。</p>}
       {query.isPending ? (
         <p>正在读取历史…</p>

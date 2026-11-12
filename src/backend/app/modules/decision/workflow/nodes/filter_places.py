@@ -1,3 +1,6 @@
+import json
+import logging
+import time
 from collections.abc import Awaitable, Callable
 
 from app.core.config import settings
@@ -7,6 +10,8 @@ from app.modules.decision.workflow.nodes.search_places import build as build_sea
 from app.modules.decision.workflow.state import State
 from app.modules.places.schemas import Place
 from app.modules.places.service import PlaceService
+
+log = logging.getLogger("food.decision")
 
 
 def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awaitable[State]]:
@@ -25,7 +30,9 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
         checked: set[str] = set()
         kept: list[Place] = []
         summary = dict(state["filter_summary"])
-        while len(kept) < settings.decision_candidate_limit:
+        for batch_number in range(1, 3):
+            if len(kept) >= settings.decision_recommendation_limit:
+                break
             if not pending:
                 more = await search_more({
                     **current, "places": kept, "filter_summary": summary,
@@ -35,12 +42,25 @@ def build(service: PlaceService, llm: FoodDecisionLlm) -> Callable[[State], Awai
                 pending = ranked([p for p in more["places"] if p.id not in checked])
                 if not pending:
                     break
-            batch_size = settings.decision_candidate_limit - len(kept)
+            batch_size = settings.decision_candidate_limit
             batch, pending = pending[:batch_size], pending[batch_size:]
             checked.update(p.id for p in batch)
+            started = time.monotonic()
             food_valid = await llm.filter_foods(batch, request)
+            log.info(json.dumps({
+                "event": "foodFilterBatch",
+                "taskId": state["task_id"],
+                "batch": batch_number,
+                "inputCount": len(batch),
+                "acceptedCount": len(food_valid),
+                "durationMs": int((time.monotonic() - started) * 1000),
+            }))
             kept.extend(food_valid)
             summary["foodRequirements"] = summary.get("foodRequirements", 0) + len(batch) - len(food_valid)
-        return {**current, "places": ranked(kept), "filter_summary": summary}
+        return {
+            **current,
+            "places": ranked(kept)[:settings.decision_candidate_limit],
+            "filter_summary": summary,
+        }
 
     return filtering

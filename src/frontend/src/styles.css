@@ -600,6 +600,9 @@ main {
 .home-preferences .food-section {
   margin: 0;
 }
+.food-section fieldset {
+  min-width: 0;
+}
 .home-preferences {
   gap: 16px;
 }
@@ -1596,17 +1599,12 @@ main {
 .activity-actions { flex-wrap: wrap; margin-top: 10px; }
 .activity-actions:empty { display: none; }
 .background-activity .error { margin-top: 8px; overflow-wrap: anywhere; }
-.activity-compact {
+.history-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-}
-.activity-compact .activity-actions {
-  margin: 0;
 }
 
 .mobile-form-layout,
@@ -1637,13 +1635,15 @@ main {
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
-.home-preferences .mobile-form-fields .food-controls .chips {
+.mobile-form-fields .food-controls .chips {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding: 2px;
   gap: 8px;
 }
-.home-preferences .mobile-form-fields .food-controls .chips button {
-  flex: 1 1 auto;
+.mobile-form-fields .food-controls .chips button {
+  flex: 0 0 auto;
   min-height: 44px;
   padding: 6px 10px;
   font-size: 14px;
@@ -1827,12 +1827,6 @@ main {
 .place-expansion > div {
   min-height: 0;
   overflow: hidden;
-}
-.place-reason {
-  margin-top: 12px;
-  color: var(--muted-foreground);
-  font-size: 14px;
-  line-height: 1.65;
 }
 .place-card .card-actions > button {
   width: 100%;

@@ -76,7 +76,6 @@ export function PlaceCard({
           aria-hidden={!selected}
         >
           <div>
-            {place.reason && <p className="place-reason">{place.reason}</p>}
             <div className="card-actions">
               <Button disabled={busy} onClick={onChoose}>
                 选这家

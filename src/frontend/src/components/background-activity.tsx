@@ -13,7 +13,6 @@ import {
 import { choiceResultSchema, runSchema, type Run } from "../lib/schemas";
 import { useDraft } from "../lib/store";
 import { subscribe } from "../lib/stream";
-import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
 const submissionWaitMs = 15_000;
@@ -210,7 +209,7 @@ export function useBackgroundActivity(enabled: boolean) {
     }
   }, [query.error, sessionId, runId, client, enabled]);
 
-  if (!enabled || (!job && !runId)) return null;
+  if (!enabled || (!job && !runId)) return { activity: null, lastRecommendation: null };
   const submitting = job?.status === "submitting";
   const saved =
     (job?.kind === "choice" && job.status === "saved") || !!run?.choice;
@@ -229,7 +228,12 @@ export function useBackgroundActivity(enabled: boolean) {
   const target = saved ? `/decision-runs/${job?.runId ?? runId}` : "/discover";
   const onTarget = pathname === target;
   const completed = run?.status === "completed" && !pending && !error && (!job || job.status === "saved");
-  if (onTarget && completed) return null;
+  if (completed) return {
+    activity: null,
+    lastRecommendation: <Button variant="outline" asChild>
+      <Link to={target}>查看上次推荐结果</Link>
+    </Button>,
+  };
   const title = submitting
     ? job.kind === "choice"
       ? "正在保存选择…"
@@ -251,8 +255,8 @@ export function useBackgroundActivity(enabled: boolean) {
                 : run
                   ? "推荐已完成"
                   : "正在读取任务状态…";
-  return (
-    <aside className={cn("background-activity", { "activity-compact": completed })} aria-label="选餐任务">
+  return { lastRecommendation: null, activity: (
+    <aside className="background-activity" aria-label="选餐任务">
       <div className="activity-heading" role="status">
         {pending ? (
           <LoaderCircle size={18} className="spin" />
@@ -264,7 +268,7 @@ export function useBackgroundActivity(enabled: boolean) {
       {pending && (
         <p className="muted">{onTarget
           ? "正在根据你的条件筛选附近餐厅，请稍候。"
-          : "可以继续浏览其他页面，完成后在这里查看结果。"}</p>
+          : "可以继续浏览其他页面，完成后到历史查看结果。"}</p>
       )}
       {active && steps.length > 0 && (
         <ol className="activity-steps" aria-label="推荐进度">
@@ -316,5 +320,5 @@ export function useBackgroundActivity(enabled: boolean) {
         )}
       </div>
     </aside>
-  );
+  ) };
 }

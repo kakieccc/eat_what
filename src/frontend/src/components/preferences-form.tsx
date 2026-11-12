@@ -137,13 +137,13 @@ export function PreferencesForm({
           onClick={() => toggleFood(field, cuisine)}>
           {selected.includes(cuisine) && <Check aria-hidden="true" />}{cuisine}
         </button>)}
-        <button type="button" aria-pressed={showOtherCuisine[field]}
+        {field === "excludedFoods" && <button type="button" aria-pressed={showOtherCuisine[field]}
           disabled={disabled || (selected.length >= limit && !showOtherCuisine[field])}
-          onClick={() => toggleOtherCuisine(field)}>其他</button>
+          onClick={() => toggleOtherCuisine(field)}>其他</button>}
       </div>
-      {showOtherCuisine[field] && <label className="field-label other-condition">
-        {field === "allowedFoods" ? "其他限定类型" : "其他不想吃的菜系"}
-        <input aria-label={field === "allowedFoods" ? "其他限定类型" : "其他不想吃的菜系"}
+      {field === "excludedFoods" && showOtherCuisine[field] && <label className="field-label other-condition">
+        其他不想吃的菜系
+        <input aria-label="其他不想吃的菜系"
           disabled={disabled} value={otherFoods[field]} placeholder="输入菜系或菜品，用逗号分隔"
           onChange={(event) => {
             const text = event.target.value;
@@ -161,6 +161,7 @@ export function PreferencesForm({
       <input
         aria-label="限定食物类型"
         value={allowedInput}
+        disabled={disabled}
         placeholder="填写菜系或菜品"
         aria-describedby="food-limit"
         aria-invalid={!!errors.allowedFoods}
@@ -175,21 +176,7 @@ export function PreferencesForm({
           {personal || desktop ? "限定食物类型" : "想吃什么"} {desktop && <span>最多选择 {allowedFoodLimit} 项</span>}
         </legend>
         <div className="food-controls">
-          {personal || desktop ? cuisineOptions("allowedFoods") : <>
-            <div className="chips">
-            {[...new Set(["家常菜", "面食", "饺子", "轻食", ...chosen])].map((c) => (
-              <button
-                type="button"
-                key={c}
-                aria-pressed={chosen.includes(c)}
-                disabled={disabled || (chosen.length >= allowedFoodLimit && !chosen.includes(c))}
-                onClick={() => toggleFood("allowedFoods", c)}
-              >
-                {chosen.includes(c) && <Check aria-hidden="true" />}{c}
-              </button>
-            ))}
-          </div>
-          </>}
+          {cuisineOptions("allowedFoods")}
           <p id="food-limit" className={cn("muted", "food-limit", { "sr-only": !personal || desktop })}>最多选择 {allowedFoodLimit} 项。</p>
           {errors.allowedFoods && <p className="error" role="alert">{errors.allowedFoods.message}</p>}
         </div>
@@ -198,12 +185,11 @@ export function PreferencesForm({
   );
   const advancedFields = (
     <div className="sheet-fields">
-      {!personal && !desktop && <fieldset data-invalid={!!errors.allowedFoods || undefined}>
+      <fieldset data-invalid={!!errors.allowedFoods || undefined}>
         <legend>更多限定类型</legend>
         {foodInput}
-        {cuisineOptions("allowedFoods")}
         {errors.allowedFoods && <p className="error" role="alert">{errors.allowedFoods.message}</p>}
-      </fieldset>}
+      </fieldset>
       {!personal && (
         <>
           <label className="field-label">
